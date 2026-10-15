@@ -11,7 +11,7 @@ jobs:
           channel: stable
       - run: flutter create --platforms=android --org com.prlifts pr_business
       - run: cp lib/main.dart pr_business/lib/main.dart
-      - run: cd pr_business && flutter pub add shared_preferences
+      - run: cd pr_business && flutter pub add shared_preferences pdf printing
       - run: cd pr_business && flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:

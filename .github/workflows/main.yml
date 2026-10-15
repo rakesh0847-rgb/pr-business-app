@@ -1,0 +1,32 @@
+name: Build PR Business APK
+
+on:
+workflow_dispatch:
+push:
+branches:
+- main
+
+jobs:
+build:
+runs-on: ubuntu-latest
+
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+  - name: Set up Flutter
+    uses: subosito/flutter-action@v2
+    with:
+      channel: stable
+  - name: Create Flutter Android project
+    run: flutter create --platforms=android --org com.prbusiness pr_business
+  - name: Get dependencies
+    working-directory: pr_business
+    run: flutter pub get
+  - name: Build APK
+    working-directory: pr_business
+    run: flutter build apk --release
+  - name: Upload APK
+    uses: actions/upload-artifact@v4
+    with:
+      name: PR-Business-APK
+      path: pr_business/build/app/outputs/flutter-apk/app-release.apk

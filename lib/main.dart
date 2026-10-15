@@ -1,42 +1,42 @@
+
 import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 void main() {
-  runApp(const PRLiftsApp());
+  runApp(const PRBusinessApp());
 }
 
-class PRLiftsApp extends StatelessWidget {
-  const PRLiftsApp({super.key});
+class PRBusinessApp extends StatelessWidget {
+  const PRBusinessApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'PR Lifts',
+      title: 'PR BUSINESS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.indigo,
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
-      home: const BusinessHome(),
+      home: const RecordsPage(),
     );
   }
 }
 
-class BusinessHome extends StatefulWidget {
-  const BusinessHome({super.key});
+class RecordsPage extends StatefulWidget {
+  const RecordsPage({super.key});
 
   @override
-  State<BusinessHome> createState() => _BusinessHomeState();
+  State<RecordsPage> createState() => _RecordsPageState();
 }
 
-class _BusinessHomeState extends State<BusinessHome> {
-  final List<Map<String, dynamic>> records = [];
-  int selectedTab = 0;
-  bool loading = true;
-
+class _RecordsPageState extends State<RecordsPage> {
   final List<String> types = [
     'Invoice',
     'Estimate',
@@ -44,6 +44,10 @@ class _BusinessHomeState extends State<BusinessHome> {
     'Income',
     'Expense',
   ];
+
+  List<Map<String, dynamic>> records = [];
+  int selectedTab = 0;
+  bool loading = true;
 
   @override
   void initState() {
@@ -53,16 +57,19 @@ class _BusinessHomeState extends State<BusinessHome> {
 
   Future<void> loadRecords() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('pr_lifts_records');
+    final saved = prefs.getString('pr_business_records');
+
     if (saved != null) {
-      records.addAll(
-        List<Map<String, dynamic>>.from(
-          (jsonDecode(saved) as List).map(
-            (e) => Map<String, dynamic>.from(e),
-          ),
-        ),
-      );
+      try {
+        final decoded = jsonDecode(saved) as List;
+        records = decoded
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+      } catch (_) {
+        records = [];
+      }
     }
+
     if (mounted) {
       setState(() => loading = false);
     }
@@ -71,61 +78,129 @@ class _BusinessHomeState extends State<BusinessHome> {
   Future<void> saveRecords() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
-      'pr_lifts_records',
+      'pr_business_records',
       jsonEncode(records),
     );
   }
 
-  String money(dynamic value) =>
-      '₹${(value as num).toStringAsFixed(2)}';
+  String money(dynamic value) {
+    final amount = double.tryParse('$value') ?? 0;
+    return '₹${amount.toStringAsFixed(2)}';
+  }
 
-  Future<void> addRecord() async {
-    final customer = TextEditingController();
-    final description = TextEditingController();
-    final amount = TextEditingController();
-    final notes = TextEditingController();
+  String nextNumber(String type) {
+    final prefix = {
+      'Invoice': 'INV',
+      'Estimate': 'EST',
+      'Quotation': 'QUO',
+      'Income': 'INC',
+      'Expense': 'EXP',
+    }[type]!;
 
-    final type = types[selectedTab];
-    final isDocument = selectedTab <= 2;
+    var highest = 0;
 
-    final result = await showDialog<Map<String, String>>(
+    for (final record in records) {
+      if (record['type'] == type) {
+        final number = '${record['number']}';
+        final parts = number.split('-');
+
+        if (parts.length == 2) {
+          final value = int.tryParse(parts[1]) ?? 0;
+          if (value > highest) highest = value;
+        }
+      }
+    }
+
+    return '$prefix-${(highest + 1).toString().padLeft(4, '0')}';
+  }
+
+  Future<Map<String, dynamic>?> recordDialog({
+    Map<String, dynamic>? existing,
+  }) async {
+    final formKey = GlobalKey<FormState>();
+    final customer = TextEditingController(
+      text: '${existing?['customer'] ?? ''}',
+    );
+    final phone = TextEditingController(
+      text: '${existing?['phone'] ?? ''}',
+    );
+    final description = TextEditingController(
+      text: '${existing?['description'] ?? ''}',
+    );
+    final amount = TextEditingController(
+      text: existing == null ? '' : '${existing['amount']}',
+    );
+    final notes = TextEditingController(
+      text: '${existing?['notes'] ?? ''}',
+    );
+
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('New $type'),
+        title: Text(existing == null ? 'New ${types[selectedTab]}' : 'Edit Record'),
         content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: customer,
-                decoration: const InputDecoration(
-                  labelText: 'Customer / Description',
-                ),
-              ),
-              if (isDocument)
-                TextField(
-                  controller: description,
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: customer,
                   decoration: const InputDecoration(
-                    labelText: 'Item / Service',
+                    labelText: 'Customer / Name',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) =>
+                      v == null || v.trim().isEmpty
+                          ? 'Enter a name'
+                          : null,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: phone,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: 'Phone (optional)',
+                    border: OutlineInputBorder(),
                   ),
                 ),
-              TextField(
-                controller: amount,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: description,
+                  decoration: const InputDecoration(
+                    labelText: 'Item / Description',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-                decoration: const InputDecoration(
-                  labelText: 'Amount (INR)',
-                  prefixText: '₹ ',
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: amount,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Amount (₹)',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) {
+                    final value = double.tryParse(v ?? '');
+                    if (value == null || value < 0) {
+                      return 'Enter a valid amount';
+                    }
+                    return null;
+                  },
                 ),
-              ),
-              TextField(
-                controller: notes,
-                decoration: const InputDecoration(
-                  labelText: 'Notes (optional)',
+                const SizedBox(height: 12),
+                TextField(
+                  controller: notes,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Notes (optional)',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         actions: [
@@ -135,23 +210,13 @@ class _BusinessHomeState extends State<BusinessHome> {
           ),
           FilledButton(
             onPressed: () {
-              final value = double.tryParse(amount.text.trim());
-              if (customer.text.trim().isEmpty ||
-                  value == null ||
-                  value < 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Enter a customer/description and valid amount.',
-                    ),
-                  ),
-                );
-                return;
-              }
+              if (!formKey.currentState!.validate()) return;
+
               Navigator.pop(dialogContext, {
                 'customer': customer.text.trim(),
+                'phone': phone.text.trim(),
                 'description': description.text.trim(),
-                'amount': value.toString(),
+                'amount': double.parse(amount.text.trim()),
                 'notes': notes.text.trim(),
               });
             },
@@ -161,222 +226,352 @@ class _BusinessHomeState extends State<BusinessHome> {
       ),
     );
 
-    if (result == null) return;
+    customer.dispose();
+    phone.dispose();
+    description.dispose();
+    amount.dispose();
+    notes.dispose();
 
-    final number = records.length + 1;
-    records.insert(0, {
-      'type': type,
-      'number': '$type-${number.toString().padLeft(4, '0')}',
-      'customer': result['customer'],
-      'description': result['description'],
-      'amount': double.parse(result['amount']!),
-      'notes': result['notes'],
-      'date': DateTime.now().toIso8601String(),
+    return result;
+  }
+
+  Future<void> addRecord() async {
+    final data = await recordDialog();
+    if (data == null) return;
+
+    final type = types[selectedTab];
+
+    setState(() {
+      records.insert(0, {
+        ...data,
+        'type': type,
+        'number': nextNumber(type),
+        'date': DateTime.now().toIso8601String(),
+        'status': 'Active',
+      });
     });
 
     await saveRecords();
-    if (mounted) setState(() {});
   }
 
-Future<void> editRecord(Map<String, dynamic> record) async {
-  final customer = TextEditingController(
-    text: record['customer']?.toString() ?? '',
-  );
-  final description = TextEditingController(
-    text: record['description']?.toString() ?? '',
-  );
-  final amount = TextEditingController(
-    text: record['amount']?.toString() ?? '',
-  );
-  final notes = TextEditingController(
-    text: record['notes']?.toString() ?? '',
-  );
+  Future<void> editRecord(Map<String, dynamic> record) async {
+    final data = await recordDialog(existing: record);
+    if (data == null) return;
 
-  final result = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('Edit Record'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    setState(() {
+      record.addAll(data);
+    });
+
+    await saveRecords();
+  }
+
+  Future<void> deleteRecord(Map<String, dynamic> record) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete record?'),
+        content: const Text('This record will be permanently removed.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => records.remove(record));
+    await saveRecords();
+  }
+
+  Future<Uint8List> makePdf(Map<String, dynamic> record) async {
+    final doc = pw.Document();
+    final type = '${record['type']}';
+
+    doc.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(36),
+        build: (context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'PR BUSINESS',
+                style: pw.TextStyle(
+                  fontSize: 26,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 8),
+              pw.Text(
+                type.toUpperCase(),
+                style: pw.TextStyle(
+                  fontSize: 18,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.Divider(),
+              pw.SizedBox(height: 12),
+              pw.Text('Number: ${record['number']}'),
+              pw.Text(
+                'Date: ${record['date'].toString().substring(0, 10)}',
+              ),
+              pw.SizedBox(height: 18),
+              pw.Text(
+                'Customer: ${record['customer']}',
+                style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              ),
+              if ('${record['phone'] ?? ''}'.isNotEmpty)
+                pw.Text('Phone: ${record['phone']}'),
+              pw.SizedBox(height: 20),
+              pw.Table(
+                border: pw.TableBorder.all(),
+                children: [
+                  pw.TableRow(
+                    children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          'Description',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          'Amount',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  pw.TableRow(
+                    children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          '${record['description'] ?? ''}',
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(money(record['amount'])),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              pw.SizedBox(height: 16),
+              pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Text(
+                  'Total: ${money(record['amount'])}',
+                  style: pw.TextStyle(
+                    fontSize: 16,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ),
+              if ('${record['notes'] ?? ''}'.isNotEmpty) ...[
+                pw.SizedBox(height: 18),
+                pw.Text('Notes: ${record['notes']}'),
+              ],
+              pw.Spacer(),
+              pw.Divider(),
+              pw.Center(
+                child: pw.Text('Thank you'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    return doc.save();
+  }
+
+  Future<void> printRecord(Map<String, dynamic> record) async {
+    try {
+      final bytes = await makePdf(record);
+      await Printing.layoutPdf(
+        onLayout: (_) async => bytes,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('PDF error: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> shareRecord(Map<String, dynamic> record) async {
+    try {
+      final bytes = await makePdf(record);
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: '${record['number']}.pdf',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Share error: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> showRecordActions(Map<String, dynamic> record) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
           children: [
-            TextField(
-              controller: customer,
-              decoration: const InputDecoration(
-                labelText: 'Customer / Description',
-              ),
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('Edit'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                editRecord(record);
+              },
             ),
-            TextField(
-              controller: description,
-              decoration: const InputDecoration(
-                labelText: 'Item / Service',
-              ),
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf),
+              title: const Text('Share PDF'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                shareRecord(record);
+              },
             ),
-            TextField(
-              controller: amount,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: const InputDecoration(
-                labelText: 'Amount (INR)',
-              ),
+            ListTile(
+              leading: const Icon(Icons.print),
+              title: const Text('Print / Preview PDF'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                printRecord(record);
+              },
             ),
-            TextField(
-              controller: notes,
-              decoration: const InputDecoration(
-                labelText: 'Notes',
-              ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Delete'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                deleteRecord(record);
+              },
             ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () {
-            final value = double.tryParse(amount.text.trim());
-            if (customer.text.trim().isEmpty ||
-                value == null ||
-                !value.isFinite ||
-                value < 0) {
-              return;
-            }
-            Navigator.pop(dialogContext, true);
-          },
-          child: const Text('Save'),
-        ),
-      ],
-    ),
-  );
-
-  if (result == true && mounted) {
-    setState(() {
-      record['customer'] = customer.text.trim();
-      record['description'] = description.text.trim();
-      record['amount'] = double.parse(amount.text.trim());
-      record['notes'] = notes.text.trim();
-    });
-    await saveRecords();
+    );
   }
-
-  customer.dispose();
-  description.dispose();
-  amount.dispose();
-  notes.dispose();
-}
 
   @override
   Widget build(BuildContext context) {
+    final type = types[selectedTab];
     final visible = records
-        .where((r) => r['type'] == types[selectedTab])
+        .where((r) => r['type'] == type)
         .toList();
 
     final total = visible.fold<double>(
       0,
-      (sum, r) => sum + (r['amount'] as num).toDouble(),
+      (sum, r) => sum + (double.tryParse('${r['amount']}') ?? 0),
     );
 
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'PR Lifts',
+          'PR BUSINESS',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
       ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                Card(
-                  margin: const EdgeInsets.all(12),
-                  child: ListTile(
-                    leading: const Icon(Icons.account_balance_wallet),
-                    title: Text('Total ${types[selectedTab]}'),
-                    subtitle: const Text('Saved on this device'),
-                    trailing: Text(
-                      money(total),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
+                SizedBox(
+                  height: 58,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: types.length,
+                    itemBuilder: (context, i) => Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 8,
+                      ),
+                      child: ChoiceChip(
+                        label: Text(types[i]),
+                        selected: selectedTab == i,
+                        onSelected: (_) {
+                          setState(() => selectedTab = i);
+                        },
                       ),
                     ),
                   ),
                 ),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: List.generate(types.length, (i) {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 3),
-                        child: ChoiceChip(
-                          label: Text(types[i]),
-                          selected: selectedTab == i,
-                          onSelected: (_) {
-                            setState(() => selectedTab = i);
-                          },
-                        ),
-                      );
-                    }),
+                Card(
+                  margin: const EdgeInsets.all(12),
+                  child: ListTile(
+                    leading: const Icon(Icons.account_balance_wallet),
+                    title: Text('${types[selectedTab]} Total'),
+                    trailing: Text(
+                      money(total),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 17,
+                      ),
+                    ),
                   ),
                 ),
                 Expanded(
                   child: visible.isEmpty
                       ? Center(
-                          child: Text('No ${types[selectedTab]} records yet.'),
+                          child: Text('No $type records yet.'),
                         )
                       : ListView.builder(
                           itemCount: visible.length,
                           itemBuilder: (context, i) {
-                            final r = visible[i];
+                            final record = visible[i];
+                            final date =
+                                '${record['date']}'.length >= 10
+                                    ? '${record['date']}'.substring(0, 10)
+                                    : '${record['date']}';
+
                             return Card(
                               margin: const EdgeInsets.symmetric(
                                 horizontal: 12,
                                 vertical: 5,
                               ),
                               child: ListTile(
-                                onTap: () => showModalBottomSheet<void>(
-  context: context,
-  builder: (sheetContext) => SafeArea(
-    child: Wrap(
-      children: [
-        ListTile(
-          leading: const Icon(Icons.edit),
-          title: const Text('Edit'),
-          
-onTap: () {
-  Navigator.pop(sheetContext);
-  editRecord(r);
-},
-
-        ListTile(
-          leading: const Icon(Icons.cancel_outlined),
-          title: const Text('Cancel'),
-          onTap: () => Navigator.pop(sheetContext),
-        ),
-        ListTile(
-          leading: const Icon(Icons.delete_outline),
-          title: const Text('Delete'),
-          onTap: () => Navigator.pop(sheetContext),
-        ),
-      ],
-    ),
-  ),
-),
-                                leading: const Icon(Icons.description),
-                                title: Text(r['customer'] as String),
-                                subtitle: Text(
-                                  '${r['number']}\n'
-                                  '${r['date'].toString().substring(0, 10)}'
-                                  '${(r['description'] as String).isNotEmpty ? '\n${r['description']}' : ''}',
+                                onTap: () => showRecordActions(record),
+                                leading: Icon(
+                                  type == 'Expense'
+                                      ? Icons.money_off
+                                      : type == 'Income'
+                                          ? Icons.attach_money
+                                          : Icons.description,
                                 ),
-                                isThreeLine:
-                                    (r['description'] as String).isNotEmpty,
+                                title: Text(
+                                  '${record['customer'] ?? ''}',
+                                ),
+                                subtitle: Text(
+                                  '${record['number']} • $date\n'
+                                  '${record['description'] ?? ''}'
+                                  '${record['status'] == 'Cancelled' ? '\nCANCELLED' : ''}',
+                                ),
+                                isThreeLine: true,
                                 trailing: Text(
-                                  money(r['amount']),
+                                  money(record['amount']),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -391,7 +586,7 @@ onTap: () {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: loading ? null : addRecord,
         icon: const Icon(Icons.add),
-        label: Text('New ${types[selectedTab]}'),
+        label: Text('Add ${types[selectedTab]}'),
       ),
     );
   }

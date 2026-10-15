@@ -1,1 +1,21 @@
-{“name”:“Build PR Lifts APK”,“on”:{“workflow_dispatch”:{},“push”:{“branches”:[“main”]}},“jobs”:{“build”:{“runs-on”:“ubuntu-latest”,“steps”:[{“name”:“Checkout repository”,“uses”:“actions/checkout@v4”},{“name”:“Set up Flutter”,“uses”:“subosito/flutter-action@v2”,“with”:{“channel”:“stable”}},{“name”:“Create Flutter project”,“run”:“flutter create –platforms=android –org com.prlifts pr_business”},{“name”:“Add PR Lifts app code”,“run”:“cp lib/main.dart pr_business/lib/main.dart”},{“name”:“Add required package”,“working-directory”:“pr_business”,“run”:“flutter pub add shared_preferences”},{“name”:“Build APK”,“working-directory”:“pr_business”,“run”:“flutter build apk –release”},{“name”:“Upload APK”,“uses”:“actions/upload-artifact@v4”,“with”:{“name”:“PR-Lifts-APK”,“path”:“pr_business/build/app/outputs/flutter-apk/app-release.apk”}}]}}
+name: Build PR Lifts APK
+
+on: [push, workflow_dispatch]
+
+jobs:
+build:
+runs-on: ubuntu-latest
+steps:
+- uses: actions/checkout@v4
+
+  - uses: subosito/flutter-action@v2
+    with:
+      channel: stable
+  - run: flutter create --platforms=android --org com.prlifts pr_business
+  - run: cp lib/main.dart pr_business/lib/main.dart
+  - run: cd pr_business && flutter pub add shared_preferences
+  - run: cd pr_business && flutter build apk --release
+  - uses: actions/upload-artifact@v4
+    with:
+      name: PR-Lifts-APK
+      path: pr_business/build/app/outputs/flutter-apk/app-release.apk

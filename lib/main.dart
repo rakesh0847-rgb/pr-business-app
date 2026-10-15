@@ -178,6 +178,96 @@ class _BusinessHomeState extends State<BusinessHome> {
     if (mounted) setState(() {});
   }
 
+Future<void> editRecord(Map<String, dynamic> record) async {
+  final customer = TextEditingController(
+    text: record['customer']?.toString() ?? '',
+  );
+  final description = TextEditingController(
+    text: record['description']?.toString() ?? '',
+  );
+  final amount = TextEditingController(
+    text: record['amount']?.toString() ?? '',
+  );
+  final notes = TextEditingController(
+    text: record['notes']?.toString() ?? '',
+  );
+
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Edit Record'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: customer,
+              decoration: const InputDecoration(
+                labelText: 'Customer / Description',
+              ),
+            ),
+            TextField(
+              controller: description,
+              decoration: const InputDecoration(
+                labelText: 'Item / Service',
+              ),
+            ),
+            TextField(
+              controller: amount,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Amount (INR)',
+              ),
+            ),
+            TextField(
+              controller: notes,
+              decoration: const InputDecoration(
+                labelText: 'Notes',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final value = double.tryParse(amount.text.trim());
+            if (customer.text.trim().isEmpty ||
+                value == null ||
+                !value.isFinite ||
+                value < 0) {
+              return;
+            }
+            Navigator.pop(dialogContext, true);
+          },
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  );
+
+  if (result == true && mounted) {
+    setState(() {
+      record['customer'] = customer.text.trim();
+      record['description'] = description.text.trim();
+      record['amount'] = double.parse(amount.text.trim());
+      record['notes'] = notes.text.trim();
+    });
+    await saveRecords();
+  }
+
+  customer.dispose();
+  description.dispose();
+  amount.dispose();
+  notes.dispose();
+}
+
   @override
   Widget build(BuildContext context) {
     final visible = records
@@ -248,6 +338,34 @@ class _BusinessHomeState extends State<BusinessHome> {
                                 vertical: 5,
                               ),
                               child: ListTile(
+                                onTap: () => showModalBottomSheet<void>(
+  context: context,
+  builder: (sheetContext) => SafeArea(
+    child: Wrap(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.edit),
+          title: const Text('Edit'),
+          
+onTap: () {
+  Navigator.pop(sheetContext);
+  editRecord(r);
+},
+
+        ListTile(
+          leading: const Icon(Icons.cancel_outlined),
+          title: const Text('Cancel'),
+          onTap: () => Navigator.pop(sheetContext),
+        ),
+        ListTile(
+          leading: const Icon(Icons.delete_outline),
+          title: const Text('Delete'),
+          onTap: () => Navigator.pop(sheetContext),
+        ),
+      ],
+    ),
+  ),
+),
                                 leading: const Icon(Icons.description),
                                 title: Text(r['customer'] as String),
                                 subtitle: Text(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'gst_invoice.dart';
 
 void main() => runApp(const PRBusinessApp());
 
@@ -339,6 +340,43 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> showDocumentPreview(Map<String,dynamic> r) async {
+    
+  if (r['type'] == 'Tax Invoice') {
+    final b = Map<String, dynamic>.from(
+      r['business'] as Map? ?? <String, dynamic>{},
+    );
+
+    final invoiceDate = DateTime.tryParse(
+      '${r['date'] ?? ''}',
+    ) ?? DateTime.now();
+
+    final invoiceItems = (r['items'] as List? ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GSTInvoicePreview(
+          businessName: '${b['name'] ?? 'PR BUSINESS'}',
+          address: '${b['address'] ?? ''}',
+          phone: '${b['phone'] ?? ''}',
+          gstin: '${b['gstin'] ?? ''}',
+          invoiceNumber: '${r['number'] ?? ''}',
+          invoiceDate: invoiceDate,
+          customerName: '${r['customer'] ?? ''}',
+          customerAddress: '${r['shipTo'] ?? ''}',
+          customerGstin: '${r['customerGstin'] ?? ''}',
+          items: invoiceItems,
+          receivedAmount:
+              (r['receivedAmount'] as num?)?.toDouble() ?? 0,
+        ),
+      ),
+    );
+
+    return;
+  }
+
     final items=(r['items'] as List? ?? []).map((e)=>Map<String,dynamic>.from(e as Map)).toList();
     final business=Map<String,dynamic>.from((r['business'] as Map?)?.cast<String,dynamic>() ?? defaultBusiness);
     final total=(r['amount'] as num?)?.toDouble()??0; final received=(r['receivedAmount'] as num?)?.toDouble()??0;

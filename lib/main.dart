@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'gst_invoice.dart';
+import 'package:pr_business/gst_invoice.dart';
 
 void main() => runApp(const PRBusinessApp());
 

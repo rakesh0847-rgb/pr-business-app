@@ -4,18 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
-void main() {
-  runApp(const PRBusinessApp());
-}
+void main() => runApp(const PRBusinessApp());
 
-const categories = [
-  'Invoice',
-  'Estimate',
-  'Quotation',
-  'Income',
-  'Expense',
-];
-
+const categories = ['Invoice', 'Estimate', 'Quotation', 'Income', 'Expense'];
 const categoryPrefixes = {
   'Invoice': 'INV',
   'Estimate': 'EST',
@@ -26,786 +17,462 @@ const categoryPrefixes = {
 
 class PRBusinessApp extends StatelessWidget {
   const PRBusinessApp({super.key});
-
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'PR Business',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-      ),
-      home: const HomePage(),
-    );
-  }
+  Widget build(BuildContext context) => MaterialApp(
+        title: 'PR Business',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo), useMaterial3: true),
+        home: const HomePage(),
+      );
 }
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
-
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
+  // Keep the existing key so existing records remain readable.
+  static const recordsKey = 'pr_business_records';
+  static const stockKey = 'pr_business_stock_v1';
   List<Map<String, dynamic>> records = [];
+  List<Map<String, dynamic>> stock = [];
   int selectedTab = 0;
   bool loading = true;
 
-  final DateTime now = DateTime.now();
+  String money(dynamic value) => '₹${((value as num?)?.toDouble() ?? 0).toStringAsFixed(2)}';
 
   @override
   void initState() {
     super.initState();
-    loadRecords();
+    loadData();
   }
 
-  String money(dynamic value) {
-    final amount = (value as num?)?.toDouble() ?? 0;
-    return '₹${amount.toStringAsFixed(2)}';
-  }
-
-  Future<void> loadRecords() async {
+  Future<void> loadData() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('pr_business_records');
-
-    if (saved != null) {
-      try {
+    try {
+      final saved = prefs.getString(recordsKey);
+      if (saved != null) {
         records = List<Map<String, dynamic>>.from(
-          (jsonDecode(saved) as List).map(
-            (e) => Map<String, dynamic>.from(e),
-          ),
+          (jsonDecode(saved) as List).map((e) => Map<String, dynamic>.from(e)),
         );
-      } catch (_) {
-        records = [];
       }
+      final savedStock = prefs.getString(stockKey);
+      if (savedStock != null) {
+        stock = List<Map<String, dynamic>>.from(
+          (jsonDecode(savedStock) as List).map((e) => Map<String, dynamic>.from(e)),
+        );
+      }
+    } catch (_) {
+      // Do not overwrite stored data if decoding fails.
     }
-
-    if (mounted) {
-      setState(() => loading = false);
-    }
+    if (mounted) setState(() => loading = false);
   }
 
-  Future<void> saveRecords() async {
+  Future<void> saveData() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('pr_business_records', jsonEncode(records));
+    await prefs.setString(recordsKey, jsonEncode(records));
+    await prefs.setString(stockKey, jsonEncode(stock));
   }
 
   String nextNumber(String type) {
     final prefix = categoryPrefixes[type]!;
     var maxNumber = 0;
-
-    for (final record in records) {
-      if (record['type'] == type) {
-        final number = (record['number'] ?? '').toString();
-        final parts = number.split('-');
-        if (parts.length == 2) {
-          final parsed = int.tryParse(parts[1]) ?? 0;
-          if (parsed > maxNumber) maxNumber = parsed;
-        }
-      }
+    for (final r in records.where((r) => r['type'] == type)) {
+      final parts = (r['number'] ?? '').toString().split('-');
+      if (parts.length == 2) maxNumber = maxNumber > (int.tryParse(parts[1]) ?? 0) ? maxNumber : (int.tryParse(parts[1]) ?? 0);
     }
-
     return '$prefix-${(maxNumber + 1).toString().padLeft(4, '0')}';
   }
 
-  Future<void> addRecord() async {
-    await showRecordDialog();
-  }
+  Future<void> addRecord() => showRecordDialog();
+  Future<void> editRecord(Map<String, dynamic> r) => showRecordDialog(record: r);
 
-  Future<void> editRecord(Map<String, dynamic> record) async {
-    await showRecordDialog(record: record);
-  }
-
-  Future<void> showRecordDialog({
-    Map<String, dynamic>? record,
-  }) async {
-    final isEditing = record != null;
-    final customer = TextEditingController(
-      text: record?['customer']?.toString() ?? '',
-    );
-    final phone = TextEditingController(
-      text: record?['phone']?.toString() ?? '',
-    );
-    final description = TextEditingController(
-      text: record?['description']?.toString() ?? '',
-    );
-    final amount = TextEditingController(
-      text: record?['amount']?.toString() ?? '',
-    );
-    final notes = TextEditingController(
-      text: record?['notes']?.toString() ?? '',
-    );
-
+  Future<void> showRecordDialog({Map<String, dynamic>? record}) async {
+    final editing = record != null;
     String type = record?['type']?.toString() ?? categories[selectedTab];
-
-    final result = await showDialog<bool>(
+    final customer = TextEditingController(text: record?['customer']?.toString() ?? '');
+    final phone = TextEditingController(text: record?['phone']?.toString() ?? '');
+    final notes = TextEditingController(text: record?['notes']?.toString() ?? '');
+    final oldItems = (record?['items'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? <Map<String, dynamic>>[];
+    final items = oldItems.isNotEmpty
+        ? oldItems
+        : <Map<String, dynamic>>[{
+            'stockId': null,
+            'description': record?['description']?.toString() ?? '',
+            'quantity': 1.0,
+            'rate': (record?['amount'] as num?)?.toDouble() ?? 0.0,
+            'total': (record?['amount'] as num?)?.toDouble() ?? 0.0,
+          }];
+    void recalc(Map<String, dynamic> item) {
+      item['total'] = ((item['quantity'] as num).toDouble()) * ((item['rate'] as num).toDouble());
+    }
+    double total() => items.fold<double>(0, (s, i) => s + ((i['total'] as num?)?.toDouble() ?? 0));
+    final ok = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, refreshDialog) => AlertDialog(
-          title: Text(isEditing ? 'Edit Record' : 'New $type'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (!isEditing)
-                  DropdownButtonFormField<String>(
-                    value: type,
-                    decoration: const InputDecoration(
-                      labelText: 'Category',
-                    ),
-                    items: categories
-                        .map(
-                          (c) => DropdownMenuItem(
-                            value: c,
-                            child: Text(c),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        refreshDialog(() => type = value);
+      builder: (dialogContext) => StatefulBuilder(builder: (context, refresh) => AlertDialog(
+        title: Text(editing ? 'Edit ${record['type']}' : 'New $type'),
+        content: SizedBox(width: 520, child: SingleChildScrollView(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!editing) DropdownButtonFormField<String>(
+              value: type,
+              decoration: const InputDecoration(labelText: 'Category'),
+              items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+              onChanged: (v) { if (v != null) refresh(() => type = v); },
+            ),
+            TextField(controller: customer, decoration: const InputDecoration(labelText: 'Customer / Name')),
+            TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone (optional)')),
+            const SizedBox(height: 8),
+            Align(alignment: Alignment.centerLeft, child: Text('Line items', style: Theme.of(context).textTheme.titleMedium)),
+            ...List.generate(items.length, (index) {
+              final item = items[index];
+              final desc = TextEditingController(text: item['description']?.toString() ?? '');
+              final qty = TextEditingController(text: item['quantity'].toString());
+              final rate = TextEditingController(text: item['rate'].toString());
+              return Card(child: Padding(padding: const EdgeInsets.all(8), child: Column(children: [
+                if (['Invoice', 'Estimate', 'Quotation'].contains(type) && stock.isNotEmpty)
+                  DropdownButtonFormField<String?>(
+                    value: item['stockId']?.toString(),
+                    decoration: const InputDecoration(labelText: 'Select stock item (optional)'),
+                    items: [
+                      const DropdownMenuItem<String?>(value: null, child: Text('Manual description')),
+                      ...stock.map((s) => DropdownMenuItem<String?>(value: s['id'].toString(), child: Text('${s['name']} (Stock: ${s['quantity']})'))),
+                    ],
+                    onChanged: (v) => refresh(() {
+                      item['stockId'] = v;
+                      if (v != null) {
+                        final s = stock.firstWhere((x) => x['id'].toString() == v);
+                        item['description'] = s['name'];
+                        item['rate'] = (s['sellingRate'] as num).toDouble();
                       }
-                    },
+                    }),
                   ),
-                TextField(
-                  controller: customer,
-                  decoration: const InputDecoration(
-                    labelText: 'Customer / Name',
-                  ),
-                ),
-                TextField(
-                  controller: phone,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
-                    labelText: 'Phone (optional)',
-                  ),
-                ),
-                TextField(
-                  controller: description,
-                  decoration: const InputDecoration(
-                    labelText: 'Item / Description',
-                  ),
-                ),
-                TextField(
-                  controller: amount,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(
-                    labelText: 'Amount (₹)',
-                  ),
-                ),
-                TextField(
-                  controller: notes,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'Notes (optional)',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (customer.text.trim().isEmpty ||
-                    (double.tryParse(amount.text.trim()) ?? -1) < 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Enter a name and valid amount.'),
-                    ),
-                  );
-                  return;
-                }
-                Navigator.pop(dialogContext, true);
-              },
-              child: const Text('Save'),
-            ),
+                TextField(controller: desc, decoration: const InputDecoration(labelText: 'Description / Item'), onChanged: (v) { item['description'] = v; }),
+                Row(children: [
+                  Expanded(child: TextField(controller: qty, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Quantity'), onChanged: (v) => refresh(() { item['quantity'] = double.tryParse(v) ?? 0; recalc(item); }))),
+                  const SizedBox(width: 8),
+                  Expanded(child: TextField(controller: rate, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Rate'), onChanged: (v) => refresh(() { item['rate'] = double.tryParse(v) ?? 0; recalc(item); }))),
+                ]),
+                Align(alignment: Alignment.centerRight, child: Text('Line total: ${money(item['total'])}')),
+                if (items.length > 1) Align(alignment: Alignment.centerRight, child: TextButton.icon(onPressed: () => refresh(() => items.removeAt(index)), icon: const Icon(Icons.remove_circle_outline), label: const Text('Remove item'))),
+              ])));
+            }),
+            Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+              onPressed: () => refresh(() => items.add({'stockId': null, 'description': '', 'quantity': 1.0, 'rate': 0.0, 'total': 0.0})),
+              icon: const Icon(Icons.add), label: const Text('Add line item'),
+            )),
+            Align(alignment: Alignment.centerRight, child: Text('Grand Total: ${money(total())}', style: const TextStyle(fontWeight: FontWeight.bold))),
+            TextField(controller: notes, maxLines: 2, decoration: const InputDecoration(labelText: 'Notes (optional)')),
           ],
-        ),
-      ),
+        ))),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () {
+            if (customer.text.trim().isEmpty || items.isEmpty || items.any((i) => (i['quantity'] as num) <= 0 || (i['rate'] as num) < 0)) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a name, positive quantity and valid rate.')));
+              return;
+            }
+            for (final i in items) { i['total'] = (i['quantity'] as num).toDouble() * (i['rate'] as num).toDouble(); }
+            Navigator.pop(dialogContext, true);
+          }, child: const Text('Save')),
+        ],
+      )),
     );
 
-    if (result == true && mounted) {
-      final parsedAmount = double.parse(amount.text.trim());
-
+    if (ok == true && mounted) {
+      final oldStockItems = (record?['items'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? <Map<String, dynamic>>[];
+      // Restore stock consumed by the previous version of this invoice before replacing it.
+      if (editing && type == 'Invoice') {
+        for (final old in oldStockItems) {
+          final id = old['stockId']?.toString();
+          if (id != null) {
+            final s = stock.where((x) => x['id'].toString() == id);
+            if (s.isNotEmpty) s.first['quantity'] = ((s.first['quantity'] as num).toDouble() + (old['quantity'] as num).toDouble());
+          }
+        }
+      }
+      if (type == 'Invoice') {
+        for (final item in items) {
+          final id = item['stockId']?.toString();
+          if (id != null) {
+            final found = stock.where((s) => s['id'].toString() == id);
+            if (found.isNotEmpty && (found.first['quantity'] as num).toDouble() < (item['quantity'] as num).toDouble()) {
+              if (editing) {
+                for (final old in oldStockItems) {
+                  final oldId = old['stockId']?.toString();
+                  if (oldId != null) {
+                    final f = stock.where((s) => s['id'].toString() == oldId);
+                    if (f.isNotEmpty) f.first['quantity'] = ((f.first['quantity'] as num).toDouble() - (old['quantity'] as num).toDouble());
+                  }
+                }
+              }
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Insufficient stock for ${found.isNotEmpty ? found.first['name'] : 'item'}.')));
+              customer.dispose(); phone.dispose(); notes.dispose();
+              return;
+            }
+          }
+        }
+        for (final item in items) {
+          final id = item['stockId']?.toString();
+          if (id != null) {
+            final f = stock.where((s) => s['id'].toString() == id);
+            if (f.isNotEmpty) f.first['quantity'] = ((f.first['quantity'] as num).toDouble() - (item['quantity'] as num).toDouble());
+          }
+        }
+      }
+      final amount = total();
       setState(() {
-        if (isEditing) {
+        if (editing) {
           record['customer'] = customer.text.trim();
           record['phone'] = phone.text.trim();
-          record['description'] = description.text.trim();
-          record['amount'] = parsedAmount;
+          record['items'] = items;
+          record['description'] = items.map((i) => i['description']).join(', ');
+          record['amount'] = amount;
           record['notes'] = notes.text.trim();
         } else {
           records.add({
-            'type': type,
-            'number': nextNumber(type),
-            'customer': customer.text.trim(),
-            'phone': phone.text.trim(),
-            'description': description.text.trim(),
-            'amount': parsedAmount,
-            'notes': notes.text.trim(),
-            'date': DateTime.now().toIso8601String(),
+            'type': type, 'number': nextNumber(type), 'customer': customer.text.trim(),
+            'phone': phone.text.trim(), 'items': items,
+            'description': items.map((i) => i['description']).join(', '),
+            'amount': amount, 'notes': notes.text.trim(), 'date': DateTime.now().toIso8601String(),
           });
         }
       });
-
-      await saveRecords();
+      await saveData();
     }
+    customer.dispose(); phone.dispose(); notes.dispose();
+  }
 
-    customer.dispose();
-    phone.dispose();
-    description.dispose();
-    amount.dispose();
-    notes.dispose();
+  Future<void> showStockDialog({Map<String, dynamic>? item}) async {
+    final editing = item != null;
+    final code = TextEditingController(text: item?['code']?.toString() ?? '');
+    final name = TextEditingController(text: item?['name']?.toString() ?? '');
+    final category = TextEditingController(text: item?['category']?.toString() ?? '');
+    final unit = TextEditingController(text: item?['unit']?.toString() ?? 'Nos');
+    final purchase = TextEditingController(text: item?['purchaseRate']?.toString() ?? '');
+    final selling = TextEditingController(text: item?['sellingRate']?.toString() ?? '');
+    final quantity = TextEditingController(text: item?['quantity']?.toString() ?? '');
+    final minimum = TextEditingController(text: item?['minimum']?.toString() ?? '0');
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: Text(editing ? 'Edit Stock Item' : 'New Stock Item'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(controller: code, decoration: const InputDecoration(labelText: 'Item Code')),
+        TextField(controller: name, decoration: const InputDecoration(labelText: 'Item Name')),
+        TextField(controller: category, decoration: const InputDecoration(labelText: 'Category')),
+        TextField(controller: unit, decoration: const InputDecoration(labelText: 'Unit (Nos/Meter/Kg)')),
+        TextField(controller: purchase, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Purchase Rate')),
+        TextField(controller: selling, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Selling Rate')),
+        TextField(controller: quantity, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Available Stock')),
+        TextField(controller: minimum, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Minimum Stock Alert')),
+      ])),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        FilledButton(onPressed: () {
+          if (name.text.trim().isEmpty || (double.tryParse(purchase.text) ?? -1) < 0 || (double.tryParse(selling.text) ?? -1) < 0 || (double.tryParse(quantity.text) ?? -1) < 0 || (double.tryParse(minimum.text) ?? -1) < 0) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter item name and valid non-negative numbers.')));
+            return;
+          }
+          Navigator.pop(ctx, true);
+        }, child: const Text('Save')),
+      ],
+    ));
+    if (ok == true && mounted) {
+      setState(() {
+        if (editing) {
+          item['code'] = code.text.trim(); item['name'] = name.text.trim(); item['category'] = category.text.trim();
+          item['unit'] = unit.text.trim(); item['purchaseRate'] = double.parse(purchase.text);
+          item['sellingRate'] = double.parse(selling.text); item['quantity'] = double.parse(quantity.text); item['minimum'] = double.parse(minimum.text);
+        } else {
+          stock.add({'id': DateTime.now().microsecondsSinceEpoch.toString(), 'code': code.text.trim(), 'name': name.text.trim(),
+            'category': category.text.trim(), 'unit': unit.text.trim().isEmpty ? 'Nos' : unit.text.trim(),
+            'purchaseRate': double.parse(purchase.text), 'sellingRate': double.parse(selling.text),
+            'quantity': double.parse(quantity.text), 'minimum': double.parse(minimum.text)});
+        }
+      });
+      await saveData();
+    }
+    code.dispose(); name.dispose(); category.dispose(); unit.dispose(); purchase.dispose(); selling.dispose(); quantity.dispose(); minimum.dispose();
   }
 
   Future<void> deleteRecord(Map<String, dynamic> record) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete record?'),
-        content: const Text('This record will be deleted from this device.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      setState(() => records.remove(record));
-      await saveRecords();
-    }
-  }
-
-  Future<void> createPdf(Map<String, dynamic> record) async {
-    final pdf = pw.Document();
-    final type = record['type'].toString().toUpperCase();
-
-    pdf.addPage(
-      pw.Page(
-        build: (context) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text(
-              type,
-              style: pw.TextStyle(
-                fontSize: 25,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.Divider(),
-            pw.SizedBox(height: 12),
-            pw.Text('Number: ${record['number']}'),
-            pw.Text('Date: ${record['date'].toString().substring(0, 10)}'),
-            pw.SizedBox(height: 12),
-            pw.Text('Customer: ${record['customer']}'),
-            if ((record['phone'] ?? '').toString().isNotEmpty)
-              pw.Text('Phone: ${record['phone']}'),
-            pw.SizedBox(height: 20),
-            pw.Table.fromTextArray(
-              headers: ['Description', 'Amount (INR)'],
-              data: [
-                [
-                  record['description']?.toString() ?? '',
-                  'Rs. ${(record['amount'] as num).toStringAsFixed(2)}',
-                ],
-              ],
-            ),
-            pw.SizedBox(height: 16),
-            pw.Align(
-              alignment: pw.Alignment.centerRight,
-              child: pw.Text(
-                'Total: Rs. ${(record['amount'] as num).toStringAsFixed(2)}',
-                style: pw.TextStyle(
-                  fontSize: 16,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-            ),
-            if ((record['notes'] ?? '').toString().isNotEmpty) ...[
-              pw.SizedBox(height: 18),
-              pw.Text('Notes: ${record['notes']}'),
-            ],
-            pw.Spacer(),
-            pw.Divider(),
-            pw.Center(child: pw.Text('Thank you')),
-          ],
-        ),
-      ),
-    );
-
-    await Printing.sharePdf(
-      bytes: await pdf.save(),
-      filename: '${record['number']}.pdf',
-    );
-  }
-
-  Future<void> chooseAndCreateReport() async {
-    DateTime start = DateTime.now();
-    DateTime end = DateTime.now();
-    String period = 'Daily';
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, refresh) => AlertDialog(
-          title: const Text('Income & Expense Report'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                value: period,
-                decoration: const InputDecoration(labelText: 'Period'),
-                items: const [
-                  DropdownMenuItem(value: 'Daily', child: Text('Daily')),
-                  DropdownMenuItem(value: 'Monthly', child: Text('Monthly')),
-                  DropdownMenuItem(
-                    value: 'Date Range',
-                    child: Text('Date Range'),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value != null) refresh(() => period = value);
-                },
-              ),
-              const SizedBox(height: 12),
-              if (period == 'Date Range') ...[
-                TextButton(
-                  onPressed: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: start,
-                      firstDate: DateTime(2000),
-                      lastDate: DateTime(2100),
-                    );
-                    if (picked != null) refresh(() => start = picked);
-                  },
-                  child: Text('From: ${start.toString().substring(0, 10)}'),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: end,
-                      firstDate: DateTime(2000),
-                      lastDate: DateTime(2100),
-                    );
-                    if (picked != null) refresh(() => end = picked);
-                  },
-                  child: Text('To: ${end.toString().substring(0, 10)}'),
-                ),
-              ],
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Generate'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    if (period == 'Daily') {
-      start = DateTime.now();
-      start = DateTime(start.year, start.month, start.day);
-      end = start.add(const Duration(days: 1)).subtract(
-            const Duration(microseconds: 1),
-          );
-    } else if (period == 'Monthly') {
-      final today = DateTime.now();
-      start = DateTime(today.year, today.month, 1);
-      end = DateTime(today.year, today.month + 1, 1).subtract(
-        const Duration(microseconds: 1),
-      );
-    } else {
-      if (end.isBefore(start)) {
-        final temp = start;
-        start = end;
-        end = temp;
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('Delete record?'),
+      content: const Text('Delete this record from this device? Stock previously deducted by this invoice will be returned.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+      ],
+    ));
+    if (ok == true) {
+      if (record['type'] == 'Invoice') {
+        for (final item in ((record['items'] as List?) ?? [])) {
+          final id = item['stockId']?.toString();
+          if (id != null) {
+            final f = stock.where((s) => s['id'].toString() == id);
+            if (f.isNotEmpty) f.first['quantity'] = ((f.first['quantity'] as num).toDouble() + (item['quantity'] as num).toDouble());
+          }
+        }
       }
-      end = DateTime(end.year, end.month, end.day, 23, 59, 59);
+      setState(() => records.remove(record));
+      await saveData();
     }
-
-    final filtered = records.where((r) {
-      final date = DateTime.tryParse(r['date'].toString());
-      return date != null &&
-          !date.isBefore(start) &&
-          !date.isAfter(end);
-    }).toList();
-
-    final income = filtered
-        .where((r) => r['type'] == 'Income')
-        .fold<double>(0, (sum, r) => sum + (r['amount'] as num).toDouble());
-
-    final expense = filtered
-        .where((r) => r['type'] == 'Expense')
-        .fold<double>(0, (sum, r) => sum + (r['amount'] as num).toDouble());
-
-    final balance = income - expense;
-
-    if (!mounted) return;
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('$period Report'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('From: ${start.toString().substring(0, 10)}'),
-              Text('To: ${end.toString().substring(0, 10)}'),
-              const Divider(),
-              Text('Income: ${money(income)}'),
-              Text('Expense: ${money(expense)}'),
-              Text(
-                'Balance: ${money(balance)}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const Divider(),
-              ...filtered.map(
-                (r) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text('${r['type']} - ${r['customer']}'),
-                  subtitle: Text('${r['number']} • ${r['date']}'),
-                  trailing: Text(money(r['amount'])),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          FilledButton.icon(
-            onPressed: () => createReportPdf(
-              period,
-              start,
-              end,
-              filtered,
-              income,
-              expense,
-            ),
-            icon: const Icon(Icons.picture_as_pdf),
-            label: const Text('Share PDF'),
-          ),
-        ],
-      ),
-    );
   }
 
-  Future<void> createReportPdf(
-    String period,
-    DateTime start,
-    DateTime end,
-    List<Map<String, dynamic>> filtered,
-    double income,
-    double expense,
-  ) async {
+  Future<void> createPdf(Map<String, dynamic> r) async {
     final pdf = pw.Document();
+    final items = (r['items'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ??
+        [{'description': r['description'] ?? '', 'quantity': 1, 'rate': r['amount'] ?? 0, 'total': r['amount'] ?? 0}];
+    pdf.addPage(pw.MultiPage(build: (ctx) => [
+      pw.Text(r['type'].toString().toUpperCase(), style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
+      pw.Divider(),
+      pw.Text('Number: ${r['number']}'),
+      pw.Text('Date: ${(r['date'] ?? '').toString().substring(0, 10)}'),
+      pw.Text('Customer: ${r['customer']}'),
+      if ((r['phone'] ?? '').toString().isNotEmpty) pw.Text('Phone: ${r['phone']}'),
+      pw.SizedBox(height: 16),
+      pw.Table.fromTextArray(headers: ['Description', 'Qty', 'Rate (INR)', 'Total (INR)'],
+        data: items.map((i) => [i['description'].toString(), i['quantity'].toString(), (i['rate'] as num).toStringAsFixed(2), (i['total'] as num).toStringAsFixed(2)]).toList()),
+      pw.SizedBox(height: 12),
+      pw.Align(alignment: pw.Alignment.centerRight, child: pw.Text('Grand Total: Rs. ${(r['amount'] as num).toStringAsFixed(2)}', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
+      if ((r['notes'] ?? '').toString().isNotEmpty) pw.Text('Notes: ${r['notes']}'),
+      pw.Spacer(), pw.Center(child: pw.Text('Thank you')),
+    ]));
+    await Printing.sharePdf(bytes: await pdf.save(), filename: '${r['number']}.pdf');
+  }
 
-    pdf.addPage(
-      pw.MultiPage(
-        build: (context) => [
-          pw.Text(
-            '$period Income & Expense Report',
-            style: pw.TextStyle(
-              fontSize: 22,
-              fontWeight: pw.FontWeight.bold,
-            ),
-          ),
-          pw.SizedBox(height: 8),
-          pw.Text('From: ${start.toString().substring(0, 10)}'),
-          pw.Text('To: ${end.toString().substring(0, 10)}'),
-          pw.SizedBox(height: 12),
-          pw.Text('Income: Rs. ${income.toStringAsFixed(2)}'),
-          pw.Text('Expense: Rs. ${expense.toStringAsFixed(2)}'),
-          pw.Text('Balance: Rs. ${(income - expense).toStringAsFixed(2)}'),
-          pw.SizedBox(height: 16),
-          pw.Table.fromTextArray(
-            headers: ['Type', 'Number', 'Customer', 'Amount (INR)'],
-            data: filtered
-                .map(
-                  (r) => [
-                    r['type'].toString(),
-                    r['number'].toString(),
-                    r['customer'].toString(),
-                    'Rs. ${(r['amount'] as num).toStringAsFixed(2)}',
-                  ],
-                )
-                .toList(),
-          ),
+  Future<void> reports() async {
+    String category = 'All Categories';
+    String period = 'Daily';
+    DateTime start = DateTime.now(), end = DateTime.now();
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, refresh) => AlertDialog(
+      title: const Text('Category Reports'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        DropdownButtonFormField<String>(value: category, decoration: const InputDecoration(labelText: 'Category'),
+          items: ['All Categories', ...categories, 'Items / Stock'].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+          onChanged: (v) { if (v != null) refresh(() => category = v); }),
+        DropdownButtonFormField<String>(value: period, decoration: const InputDecoration(labelText: 'Period'),
+          items: ['Daily', 'Monthly', 'Date Range'].map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
+          onChanged: (v) { if (v != null) refresh(() => period = v); }),
+        if (period == 'Date Range') ...[
+          TextButton(onPressed: () async { final d = await showDatePicker(context: ctx, initialDate: start, firstDate: DateTime(2000), lastDate: DateTime(2100)); if (d != null) refresh(() => start = d); }, child: Text('From: ${start.toString().substring(0, 10)}')),
+          TextButton(onPressed: () async { final d = await showDatePicker(context: ctx, initialDate: end, firstDate: DateTime(2000), lastDate: DateTime(2100)); if (d != null) refresh(() => end = d); }, child: Text('To: ${end.toString().substring(0, 10)}')),
         ],
-      ),
-    );
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Generate'))],
+    )));
+    if (ok != true || !mounted) return;
+    if (period == 'Daily') { final d = DateTime.now(); start = DateTime(d.year, d.month, d.day); end = start.add(const Duration(days: 1)).subtract(const Duration(microseconds: 1)); }
+    else if (period == 'Monthly') { final d = DateTime.now(); start = DateTime(d.year, d.month, 1); end = DateTime(d.year, d.month + 1, 1).subtract(const Duration(microseconds: 1)); }
+    else { if (end.isBefore(start)) { final t = start; start = end; end = t; } end = DateTime(end.year, end.month, end.day, 23, 59, 59); }
+    final filtered = records.where((r) {
+      final d = DateTime.tryParse((r['date'] ?? '').toString());
+      return d != null && !d.isBefore(start) && !d.isAfter(end) && (category == 'All Categories' || r['type'] == category);
+    }).toList();
+    final income = filtered.where((r) => r['type'] == 'Income').fold<double>(0, (s, r) => s + (r['amount'] as num).toDouble());
+    final expense = filtered.where((r) => r['type'] == 'Expense').fold<double>(0, (s, r) => s + (r['amount'] as num).toDouble());
+    final selectedTotal = filtered.fold<double>(0, (s, r) => s + ((r['amount'] as num?)?.toDouble() ?? 0));
+    final pdf = pw.Document();
+    pdf.addPage(pw.MultiPage(build: (ctx) => [
+      pw.Text('$category — $period Report', style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold)),
+      pw.Text('From: ${start.toString().substring(0, 10)}  To: ${end.toString().substring(0, 10)}'),
+      pw.SizedBox(height: 10),
+      pw.Text('Selected total: Rs. ${selectedTotal.toStringAsFixed(2)}'),
+      pw.Text('Income: Rs. ${income.toStringAsFixed(2)}    Expense: Rs. ${expense.toStringAsFixed(2)}    Balance: Rs. ${(income-expense).toStringAsFixed(2)}'),
+      pw.SizedBox(height: 12),
+      pw.Table.fromTextArray(headers: ['Category', 'Number', 'Customer', 'Amount (INR)'], data: filtered.map((r) => [r['type'].toString(), r['number'].toString(), r['customer'].toString(), (r['amount'] as num).toStringAsFixed(2)]).toList()),
+    ]));
+    await showDialog<void>(context: context, builder: (ctx) => AlertDialog(
+      title: Text('$category — $period Report'),
+      content: SizedBox(width: 500, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('From ${start.toString().substring(0, 10)} to ${end.toString().substring(0, 10)}'),
+        Text('Selected total: ${money(selectedTotal)}'),
+        Text('Income: ${money(income)}    Expense: ${money(expense)}'),
+        Text('Balance: ${money(income-expense)}'),
+        const Divider(),
+        ...filtered.map((r) => ListTile(dense: true, title: Text('${r['number']} • ${r['customer']}'), subtitle: Text('${r['type']} • ${(r['date'] ?? '').toString().substring(0, 10)}'), trailing: Text(money(r['amount'])))),
+      ]))),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        FilledButton.icon(onPressed: () async { await Printing.sharePdf(bytes: await pdf.save(), filename: 'PR_Business_Report.pdf'); }, icon: const Icon(Icons.picture_as_pdf), label: const Text('Share PDF')),
+      ],
+    ));
+  }
 
-    await Printing.sharePdf(
-      bytes: await pdf.save(),
-      filename: 'PR_Business_${period.replaceAll(' ', '_')}_Report.pdf',
-    );
+  Future<void> stockReport() async {
+    final pdf = pw.Document();
+    pdf.addPage(pw.MultiPage(build: (ctx) => [
+      pw.Text('Items / Stock Report', style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold)),
+      pw.Table.fromTextArray(headers: ['Code', 'Item', 'Category', 'Qty', 'Purchase', 'Selling'],
+        data: stock.map((s) => [s['code'].toString(), s['name'].toString(), s['category'].toString(), s['quantity'].toString(), (s['purchaseRate'] as num).toStringAsFixed(2), (s['sellingRate'] as num).toStringAsFixed(2)]).toList()),
+    ]));
+    await showDialog<void>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('Items / Stock Report'),
+      content: SizedBox(width: 520, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: stock.map((s) => ListTile(
+        title: Text('${s['name']} ${((s['quantity'] as num) <= (s['minimum'] as num)) ? '• LOW STOCK' : ''}'),
+        subtitle: Text('${s['code']} • ${s['category']} • Purchase ${money(s['purchaseRate'])} • Selling ${money(s['sellingRate'])}'),
+        trailing: Text('${s['quantity']} ${s['unit']}'),
+      )).toList()))),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')), FilledButton(onPressed: () async { await Printing.sharePdf(bytes: await pdf.save(), filename: 'PR_Business_Stock_Report.pdf'); }, child: const Text('Share PDF'))],
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
-    final type = categories[selectedTab];
-    final visible = records.where((r) => r['type'] == type).toList()
-      ..sort(
-        (a, b) => b['date'].toString().compareTo(a['date'].toString()),
-      );
-
-    final total = visible.fold<double>(
-      0,
-      (sum, r) => sum + (r['amount'] as num).toDouble(),
-    );
-
+    final isStock = selectedTab == categories.length;
+    final type = isStock ? 'Items / Stock' : categories[selectedTab];
+    final visible = isStock ? <Map<String, dynamic>>[] : records.where((r) => r['type'] == type).toList()..sort((a, b) => b['date'].toString().compareTo(a['date'].toString()));
+    final total = visible.fold<double>(0, (s, r) => s + ((r['amount'] as num?)?.toDouble() ?? 0));
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('PR BUSINESS'),
-        actions: [
-          IconButton(
-            tooltip: 'Reports',
-            onPressed: chooseAndCreateReport,
-            icon: const Icon(Icons.analytics_outlined),
-          ),
-        ],
-      ),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.all(8),
-                  child: Row(
-                    children: List.generate(categories.length, (i) {
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: ChoiceChip(
-                          label: Text(categories[i]),
-                          selected: selectedTab == i,
-                          onSelected: (_) => setState(() => selectedTab = i),
-                        ),
-                      );
-                    }),
-                  ),
-                ),
-                Card(
-                  margin: const EdgeInsets.all(12),
-                  child: ListTile(
-                    leading: const Icon(Icons.account_balance_wallet),
-                    title: Text('$type Total'),
-                    trailing: Text(
-                      money(total),
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: visible.isEmpty
-                      ? Center(child: Text('No $type records yet.'))
-                      : ListView.builder(
-
-                          itemCount: visible.length,
-
-                          itemBuilder: (context, i) {
-
-                            final r = visible[i];
-
-                            return Card(
-
-                              margin: const EdgeInsets.symmetric(
-
-                                horizontal: 12,
-
-                                vertical: 5,
-
-                              ),
-
-                              child: ListTile(
-
-                                onTap: () async {
-
-                                  final action = await showModalBottomSheet<String>(
-
-                                    context: context,
-
-                                    builder: (sheetContext) => SafeArea(
-
-                                      child: Wrap(
-
-                                        children: [
-
-                                          ListTile(
-
-                                            leading: const Icon(Icons.edit),
-
-                                            title: const Text('Edit'),
-
-                                            onTap: () => Navigator.pop(
-
-                                              sheetContext,
-
-                                              'edit',
-
-                                            ),
-
-                                          ),
-
-                                          ListTile(
-
-                                            leading: const Icon(Icons.picture_as_pdf),
-
-                                            title: const Text('Share PDF'),
-
-                                            onTap: () => Navigator.pop(
-
-                                              sheetContext,
-
-                                              'pdf',
-
-                                            ),
-
-                                          ),
-
-                                          ListTile(
-
-                                            leading: const Icon(Icons.print),
-
-                                            title: const Text('Print / Preview PDF'),
-
-                                            onTap: () => Navigator.pop(
-
-                                              sheetContext,
-
-                                              'print',
-
-                                            ),
-
-                                          ),
-
-                                          ListTile(
-
-                                            leading: const Icon(Icons.delete_outline),
-
-                                            title: const Text('Delete'),
-
-                                            onTap: () => Navigator.pop(
-
-                                              sheetContext,
-
-                                              'delete',
-
-                                            ),
-
-                                          ),
-
-                                        ],
-
-                                      ),
-
-                                    ),
-
-                                  );
-
-                                  if (!mounted) return;
-
-                                  if (action == 'edit') {
-
-                                    await editRecord(r);
-
-                                  } else if (action == 'pdf') {
-
-                                    await createPdf(r);
-
-                                  } else if (action == 'print') {
-
-                                    await createPdf(r);
-
-                                  } else if (action == 'delete') {
-
-                                    await deleteRecord(r);
-
-                                  }
-
-                                },
-
-                                leading: const Icon(Icons.description_outlined),
-
-                                title: Text(r['customer'].toString()),
-
-                                subtitle: Text(
-
-                                  '${r['number']} • ${r['date'].toString().substring(0, 10)}\n'
-
-                                  '${r['description']}',
-
-                                ),
-
-                                isThreeLine: true,
-
-                                trailing: Text(
-
-                                  money(r['amount']),
-
-                                  style: const TextStyle(
-
-                                    fontWeight: FontWeight.bold,
-
-                                  ),
-
-                                ),
-
-                              ),
-
-                            );
-
-                          },
-
-                        ),
-
-                ),
-
-              ],
-
-            ),
-
+      appBar: AppBar(title: const Text('PR BUSINESS'), actions: [
+        IconButton(tooltip: 'Category reports', onPressed: reports, icon: const Icon(Icons.analytics_outlined)),
+        if (isStock) IconButton(tooltip: 'Stock report', onPressed: stockReport, icon: const Icon(Icons.picture_as_pdf)),
+      ]),
       floatingActionButton: FloatingActionButton.extended(
-
-        onPressed: addRecord,
-
-        icon: const Icon(Icons.add),
-
-        label: Text('Add $type'),
-
+        onPressed: isStock ? () => showStockDialog() : addRecord,
+        icon: const Icon(Icons.add), label: Text(isStock ? 'Add Stock Item' : 'Add $type'),
       ),
-
+      body: loading ? const Center(child: CircularProgressIndicator()) : Column(children: [
+        SingleChildScrollView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.all(8), child: Row(children: [
+          ...categories.asMap().entries.map((e) => Padding(padding: const EdgeInsets.only(right: 6), child: ChoiceChip(label: Text(e.value), selected: selectedTab == e.key, onSelected: (_) => setState(() => selectedTab = e.key))),
+          ChoiceChip(label: const Text('Items / Stock'), selected: isStock, onSelected: (_) => setState(() => selectedTab = categories.length)),
+        ])),
+        if (!isStock) Card(margin: const EdgeInsets.all(12), child: ListTile(leading: const Icon(Icons.account_balance_wallet), title: Text('$type Total'), trailing: Text(money(total), style: const TextStyle(fontWeight: FontWeight.bold)))),
+        Expanded(child: isStock
+          ? stock.isEmpty ? const Center(child: Text('No stock items yet. Tap Add Stock Item.')) : ListView.builder(itemCount: stock.length, itemBuilder: (ctx, i) {
+              final s = stock[i];
+              final low = (s['quantity'] as num) <= (s['minimum'] as num);
+              return Card(margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5), child: ListTile(
+                leading: Icon(low ? Icons.warning_amber : Icons.inventory_2_outlined, color: low ? Colors.orange : null),
+                title: Text('${s['name']} ${low ? '• LOW STOCK' : ''}'),
+                subtitle: Text('${s['code']} • ${s['category']} • Qty ${s['quantity']} ${s['unit']}\nPurchase ${money(s['purchaseRate'])} • Selling ${money(s['sellingRate'])}'),
+                isThreeLine: true,
+                trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () => showStockDialog(item: s)),
+              ));
+            })
+          : visible.isEmpty ? Center(child: Text('No $type records yet.')) : ListView.builder(itemCount: visible.length, itemBuilder: (ctx, i) {
+              final r = visible[i];
+              return Card(margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5), child: ListTile(
+                leading: const Icon(Icons.description_outlined),
+                title: Text(r['customer'].toString()),
+                subtitle: Text('${r['number']} • ${(r['date'] ?? '').toString().substring(0, 10)}\n${r['description'] ?? ''}'),
+                isThreeLine: true,
+                trailing: Text(money(r['amount'])),
+                onTap: () async {
+                  final action = await showModalBottomSheet<String>(context: context, builder: (sc) => SafeArea(child: Wrap(children: [
+                    ListTile(leading: const Icon(Icons.edit), title: const Text('Edit'), onTap: () => Navigator.pop(sc, 'edit')),
+                    ListTile(leading: const Icon(Icons.picture_as_pdf), title: const Text('Share PDF'), onTap: () => Navigator.pop(sc, 'pdf')),
+                    ListTile(leading: const Icon(Icons.delete_outline), title: const Text('Delete'), onTap: () => Navigator.pop(sc, 'delete')),
+                  ])));
+                  if (!mounted) return;
+                  if (action == 'edit') await editRecord(r);
+                  if (action == 'pdf') await createPdf(r);
+                  if (action == 'delete') await deleteRecord(r);
+                },
+              ));
+            })),
+      ]),
     );
-
   }
-
 }

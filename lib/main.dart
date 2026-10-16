@@ -6,9 +6,10 @@ import 'package:printing/printing.dart';
 
 void main() => runApp(const PRBusinessApp());
 
-const categories = ['Invoice', 'Estimate', 'Quotation', 'Income', 'Expense'];
+const categories = ['Invoice', 'Tax Invoice', 'Estimate', 'Quotation', 'Income', 'Expense'];
 const categoryPrefixes = {
   'Invoice': 'INV',
+  'Tax Invoice': 'TIN',
   'Estimate': 'EST',
   'Quotation': 'QUO',
   'Income': 'INC',
@@ -36,8 +37,12 @@ class _HomePageState extends State<HomePage> {
   // Keep the existing key so existing records remain readable.
   static const recordsKey = 'pr_business_records';
   static const stockKey = 'pr_business_stock_v1';
+  static const businessKey = 'pr_business_profiles_v2';
+  static const staffKey = 'pr_business_staff_v2';
   List<Map<String, dynamic>> records = [];
   List<Map<String, dynamic>> stock = [];
+  List<Map<String, dynamic>> businesses = [];
+  List<Map<String, dynamic>> staff = [];
   int selectedTab = 0;
   bool loading = true;
 
@@ -64,6 +69,11 @@ class _HomePageState extends State<HomePage> {
           (jsonDecode(savedStock) as List).map((e) => Map<String, dynamic>.from(e)),
         );
       }
+      final savedBusinesses = prefs.getString(businessKey);
+      if (savedBusinesses != null) businesses = List<Map<String, dynamic>>.from((jsonDecode(savedBusinesses) as List).map((e) => Map<String, dynamic>.from(e)));
+      final savedStaff = prefs.getString(staffKey);
+      if (savedStaff != null) staff = List<Map<String, dynamic>>.from((jsonDecode(savedStaff) as List).map((e) => Map<String, dynamic>.from(e)));
+      if (businesses.isEmpty) businesses.add({'id':'default','name':'PR BUSINESS','address':'','phone':'','email':'','gstin':'','bankName':'','accountName':'','accountNumber':'','ifsc':'','default':true});
     } catch (_) {
       // Do not overwrite stored data if decoding fails.
     }
@@ -74,6 +84,8 @@ class _HomePageState extends State<HomePage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(recordsKey, jsonEncode(records));
     await prefs.setString(stockKey, jsonEncode(stock));
+    await prefs.setString(businessKey, jsonEncode(businesses));
+    await prefs.setString(staffKey, jsonEncode(staff));
   }
 
   String nextNumber(String type) {
@@ -86,14 +98,79 @@ class _HomePageState extends State<HomePage> {
     return '$prefix-${(maxNumber + 1).toString().padLeft(4, '0')}';
   }
 
+  Map<String, dynamic> get defaultBusiness => businesses.firstWhere((b) => b['default'] == true, orElse: () => businesses.isNotEmpty ? businesses.first : {'id':'default','name':'PR BUSINESS'});
+
+  Future<void> businessSettings() async {
+    await showDialog<void>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, refresh) => AlertDialog(
+      title: const Text('Business Profiles'),
+      content: SizedBox(width: 520, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ...businesses.map((b) => Card(child: ListTile(
+          title: Text((b['name'] ?? 'Business').toString()),
+          subtitle: Text('${(b['address'] ?? '').toString()}\nGSTIN: ${(b['gstin'] ?? '').toString()}${b['default'] == true ? ' • Default' : ''}'),
+          isThreeLine: true,
+          trailing: PopupMenuButton<String>(onSelected: (v) async {
+            if (v == 'default') { for (final x in businesses) { x['default'] = x['id'] == b['id']; } await saveData(); refresh(() {}); }
+            if (v == 'edit') { await editBusiness(b); refresh(() {}); }
+            if (v == 'delete' && businesses.length > 1) { businesses.remove(b); if (b['default'] == true) businesses.first['default'] = true; await saveData(); refresh(() {}); }
+          }, itemBuilder: (_) => const [PopupMenuItem(value:'default', child:Text('Set as default')), PopupMenuItem(value:'edit', child:Text('Edit')), PopupMenuItem(value:'delete', child:Text('Delete'))]),
+        ))),
+        const SizedBox(height: 8),
+        FilledButton.icon(onPressed: () async { final b = <String,dynamic>{'id':DateTime.now().microsecondsSinceEpoch.toString(),'name':'','address':'','phone':'','email':'','gstin':'','bankName':'','accountName':'','accountNumber':'','ifsc':'','default':businesses.isEmpty}; await editBusiness(b, isNew:true); refresh(() {}); }, icon: const Icon(Icons.add), label: const Text('Add Business Profile')),
+        const Text('Tip: select a business while creating an Invoice, Estimate or Quotation. Saved documents keep a snapshot of the selected profile.'),
+      ]))),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+    )));
+  }
+
+  Future<void> editBusiness(Map<String,dynamic> b, {bool isNew = false}) async {
+    final fields = <String,TextEditingController>{
+      'name':TextEditingController(text:(b['name']??'').toString()), 'address':TextEditingController(text:(b['address']??'').toString()),
+      'phone':TextEditingController(text:(b['phone']??'').toString()), 'email':TextEditingController(text:(b['email']??'').toString()),
+      'gstin':TextEditingController(text:(b['gstin']??'').toString()), 'bankName':TextEditingController(text:(b['bankName']??'').toString()),
+      'accountName':TextEditingController(text:(b['accountName']??'').toString()), 'accountNumber':TextEditingController(text:(b['accountNumber']??'').toString()), 'ifsc':TextEditingController(text:(b['ifsc']??'').toString()),
+    };
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: Text(isNew?'Add Business':'Edit Business'), content: SizedBox(width:480, child: SingleChildScrollView(child: Column(mainAxisSize:MainAxisSize.min, children: [
+      for (final entry in fields.entries) TextField(controller:entry.value, maxLines: entry.key=='address'?2:1, decoration:InputDecoration(labelText: {'name':'Business name','address':'Address','phone':'Phone','email':'Email','gstin':'GSTIN (optional)','bankName':'Bank name','accountName':'Account holder','accountNumber':'Account number','ifsc':'IFSC'}[entry.key])),
+    ]))), actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false), child:const Text('Cancel')), FilledButton(onPressed:()=>Navigator.pop(ctx, fields['name']!.text.trim().isNotEmpty), child:const Text('Save'))]));
+    if (ok == true) { for (final e in fields.entries) { b[e.key] = e.value.text.trim(); } if (isNew) businesses.add(b); await saveData(); if (mounted) setState(() {}); }
+    for (final c in fields.values) { c.dispose(); }
+  }
+
+  Future<void> manageStaff() async {
+    await showDialog<void>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, refresh) => AlertDialog(
+      title: const Text('Staff Management'),
+      content: SizedBox(width:520, child: SingleChildScrollView(child: Column(mainAxisSize:MainAxisSize.min, children: [
+        ...staff.map((s) => Card(child: ListTile(title:Text((s['name']??'Staff').toString()), subtitle:Text('${s['payType']} • Rate ${money(s['rate'])} • Present today: ${s['presentToday']==true?'Yes':'No'}'), trailing:Wrap(mainAxisSize:MainAxisSize.min, children:[IconButton(tooltip:'Mark present/absent', icon:Icon(s['presentToday']==true?Icons.check_circle:Icons.radio_button_unchecked), onPressed:() async { s['presentToday']=!(s['presentToday']==true); s['lastAttendance']=DateTime.now().toIso8601String(); await saveData(); refresh((){}); }), IconButton(icon:const Icon(Icons.edit), onPressed:() async { await editStaff(s); refresh((){}); }), IconButton(icon:const Icon(Icons.delete_outline), onPressed:() async { staff.remove(s); await saveData(); refresh((){}); })])))),
+        FilledButton.icon(onPressed:() async { final s=<String,dynamic>{'id':DateTime.now().microsecondsSinceEpoch.toString(),'name':'','payType':'Monthly salary','rate':0.0,'overtimeRate':0.0,'presentToday':false}; await editStaff(s,isNew:true); refresh((){}); }, icon:const Icon(Icons.add), label:const Text('Add Staff')),
+        const Text('Attendance currently records present/absent for today. Check-in/out and payroll exports can be added in a later iteration.'),
+      ]))), actions:[TextButton(onPressed:()=>Navigator.pop(ctx), child:const Text('Close'))],
+    )));
+  }
+
+  Future<void> editStaff(Map<String,dynamic> s, {bool isNew=false}) async {
+    final name=TextEditingController(text:(s['name']??'').toString()); final rate=TextEditingController(text:(s['rate']??0).toString()); final overtime=TextEditingController(text:(s['overtimeRate']??0).toString()); String payType=(s['payType']??'Monthly salary').toString();
+    final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,refresh)=>AlertDialog(title:Text(isNew?'Add Staff':'Edit Staff'),content:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:name,decoration:const InputDecoration(labelText:'Staff name')),DropdownButtonFormField<String>(value:payType,decoration:const InputDecoration(labelText:'Pay type'),items:const [DropdownMenuItem(value:'Monthly salary',child:Text('Monthly salary')),DropdownMenuItem(value:'Daily wage',child:Text('Daily wage'))],onChanged:(v){if(v!=null)refresh(()=>payType=v);}),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:payType=='Daily wage'?'Daily wage amount':'Monthly salary')),TextField(controller:overtime,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Overtime rate per hour'))]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,name.text.trim().isNotEmpty&&(double.tryParse(rate.text)??-1)>=0&&(double.tryParse(overtime.text)??-1)>=0),child:const Text('Save'))])));
+    if(ok==true){s['name']=name.text.trim();s['payType']=payType;s['rate']=double.parse(rate.text);s['overtimeRate']=double.parse(overtime.text);if(isNew)staff.add(s);await saveData();if(mounted)setState((){});} name.dispose();rate.dispose();overtime.dispose();
+  }
+
+  Future<void> recordPayment(Map<String,dynamic> r) async {
+    final amount=TextEditingController(); final note=TextEditingController();
+    final total=(r['amount'] as num?)?.toDouble()??0; final paid=(r['receivedAmount'] as num?)?.toDouble()??0; final due=(total-paid).clamp(0.0,total);
+    final ok=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(title:Text('Record Payment • ${r['number']}'),content:Column(mainAxisSize:MainAxisSize.min,children:[Text('Invoice total: ${money(total)}\nReceived: ${money(paid)}\nOutstanding: ${money(due)}'),TextField(controller:amount,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Amount received')),TextField(controller:note,decoration:const InputDecoration(labelText:'Payment note / method (optional)'))]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:(){final v=double.tryParse(amount.text)??0;if(v>0&&v<=due)Navigator.pop(ctx,true);else ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Enter an amount greater than zero and not above ${money(due)}.')));},child:const Text('Save Payment'))]));
+    if(ok==true){final v=double.parse(amount.text);r['receivedAmount']=paid+v; final payments=List<Map<String,dynamic>>.from((r['payments'] as List? ?? []).map((e)=>Map<String,dynamic>.from(e as Map)));payments.add({'date':DateTime.now().toIso8601String(),'amount':v,'note':note.text.trim()});r['payments']=payments;setState((){});await saveData();}
+    amount.dispose();note.dispose();
+  }
+
   Future<void> addRecord() => showRecordDialog();
   Future<void> editRecord(Map<String, dynamic> r) => showRecordDialog(record: r);
 
   Future<void> showRecordDialog({Map<String, dynamic>? record}) async {
     final editing = record != null;
     String type = record?['type']?.toString() ?? categories[selectedTab];
+    String selectedBusinessId = (record?['businessId'] ?? defaultBusiness['id']).toString();
     final customer = TextEditingController(text: record?['customer']?.toString() ?? '');
     final phone = TextEditingController(text: record?['phone']?.toString() ?? '');
+    final shipTo = TextEditingController(text: record?['shipTo']?.toString() ?? '');
     final notes = TextEditingController(text: record?['notes']?.toString() ?? '');
     final oldItems = (record?['items'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? <Map<String, dynamic>>[];
     final items = oldItems.isNotEmpty
@@ -122,8 +199,15 @@ class _HomePageState extends State<HomePage> {
               items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
               onChanged: (v) { if (v != null) refresh(() => type = v); },
             ),
+            if (['Invoice','Estimate','Quotation'].contains(type)) DropdownButtonFormField<String>(
+              value: businesses.any((b) => b['id'].toString() == selectedBusinessId) ? selectedBusinessId : defaultBusiness['id'].toString(),
+              decoration: const InputDecoration(labelText: 'Business Profile'),
+              items: businesses.map((b) => DropdownMenuItem(value: b['id'].toString(), child: Text((b['name'] ?? 'Business').toString()))).toList(),
+              onChanged: (v) { if (v != null) refresh(() => selectedBusinessId = v); },
+            ),
             TextField(controller: customer, decoration: const InputDecoration(labelText: 'Customer / Name')),
             TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone (optional)')),
+            if (type == 'Tax Invoice') TextField(controller: shipTo, maxLines: 2, decoration: const InputDecoration(labelText: 'Ship To address (optional)')),
             const SizedBox(height: 8),
             Align(alignment: Alignment.centerLeft, child: Text('Line items', style: Theme.of(context).textTheme.titleMedium)),
             ...List.generate(items.length, (index) {
@@ -168,6 +252,11 @@ class _HomePageState extends State<HomePage> {
           ],
         ))),
         actions: [
+          TextButton(onPressed: () async {
+            for (final i in items) { i['total'] = (i['quantity'] as num).toDouble() * (i['rate'] as num).toDouble(); }
+            final previewRecord = <String,dynamic>{'type':type,'number':record?['number'] ?? nextNumber(type),'date':record?['date'] ?? DateTime.now().toIso8601String(),'customer':customer.text.trim(),'phone':phone.text.trim(),'shipTo':shipTo.text.trim(),'items':items.map((i)=>Map<String,dynamic>.from(i)).toList(),'amount':total(),'notes':notes.text.trim(),'business':Map<String,dynamic>.from(businesses.firstWhere((b)=>b['id'].toString()==selectedBusinessId,orElse:()=>defaultBusiness))};
+            await showDocumentPreview(previewRecord);
+          }, child: const Text('Preview')),
           TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
           FilledButton(onPressed: () {
             if (customer.text.trim().isEmpty || items.isEmpty || items.any((i) => (i['quantity'] as num) <= 0 || (i['rate'] as num) < 0)) {
@@ -184,7 +273,7 @@ class _HomePageState extends State<HomePage> {
     if (ok == true && mounted) {
       final oldStockItems = (record?['items'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? <Map<String, dynamic>>[];
       // Restore stock consumed by the previous version of this invoice before replacing it.
-      if (editing && type == 'Invoice') {
+      if (editing && ['Invoice','Tax Invoice'].contains(type)) {
         for (final old in oldStockItems) {
           final id = old['stockId']?.toString();
           if (id != null) {
@@ -193,7 +282,7 @@ class _HomePageState extends State<HomePage> {
           }
         }
       }
-      if (type == 'Invoice') {
+      if (['Invoice','Tax Invoice'].contains(type)) {
         for (final item in items) {
           final id = item['stockId']?.toString();
           if (id != null) {
@@ -209,7 +298,7 @@ class _HomePageState extends State<HomePage> {
                 }
               }
               if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Insufficient stock for ${found.isNotEmpty ? found.first['name'] : 'item'}.')));
-              customer.dispose(); phone.dispose(); notes.dispose();
+              customer.dispose(); phone.dispose(); shipTo.dispose(); notes.dispose();
               return;
             }
           }
@@ -227,6 +316,9 @@ class _HomePageState extends State<HomePage> {
         if (editing) {
           record['customer'] = customer.text.trim();
           record['phone'] = phone.text.trim();
+          record['shipTo'] = shipTo.text.trim();
+          record['businessId'] = selectedBusinessId;
+          record['business'] = Map<String,dynamic>.from(businesses.firstWhere((b) => b['id'].toString() == selectedBusinessId, orElse: () => defaultBusiness));
           record['items'] = items;
           record['description'] = items.map((i) => i['description']).join(', ');
           record['amount'] = amount;
@@ -234,15 +326,24 @@ class _HomePageState extends State<HomePage> {
         } else {
           records.add({
             'type': type, 'number': nextNumber(type), 'customer': customer.text.trim(),
-            'phone': phone.text.trim(), 'items': items,
+            'phone': phone.text.trim(), 'shipTo': shipTo.text.trim(), 'items': items,
             'description': items.map((i) => i['description']).join(', '),
             'amount': amount, 'notes': notes.text.trim(), 'date': DateTime.now().toIso8601String(),
+            'businessId': selectedBusinessId, 'business': Map<String,dynamic>.from(businesses.firstWhere((b) => b['id'].toString() == selectedBusinessId, orElse: () => defaultBusiness)), 'receivedAmount': 0.0, 'payments': <Map<String,dynamic>>[],
           });
         }
       });
       await saveData();
     }
-    customer.dispose(); phone.dispose(); notes.dispose();
+    customer.dispose(); phone.dispose(); shipTo.dispose(); notes.dispose();
+  }
+
+  Future<void> showDocumentPreview(Map<String,dynamic> r) async {
+    final items=(r['items'] as List? ?? []).map((e)=>Map<String,dynamic>.from(e as Map)).toList();
+    final business=Map<String,dynamic>.from((r['business'] as Map?)?.cast<String,dynamic>() ?? defaultBusiness);
+    final total=(r['amount'] as num?)?.toDouble()??0; final received=(r['receivedAmount'] as num?)?.toDouble()??0;
+    await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:Text('${r['type']} Preview'),content:SizedBox(width:560,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      if(r['type']=='Tax Invoice') Text((business['name']??'').toString(),style:Theme.of(context).textTheme.titleLarge),if(r['type']=='Tax Invoice' && (business['address']??'').toString().isNotEmpty)Text(business['address'].toString()),if(r['type']=='Tax Invoice' && (business['phone']??'').toString().isNotEmpty)Text('Phone: ${business['phone']}'),if(r['type']=='Tax Invoice' && (business['gstin']??'').toString().isNotEmpty)Text('GSTIN: ${business['gstin']}'),const Divider(),Text('${r['type']}  •  ${r['number']}',style:const TextStyle(fontWeight:FontWeight.bold)),Text('Date: ${(r['date']??'').toString().substring(0,10)}'),Text('Bill To: ${r['customer']}'),if((r['phone']??'').toString().isNotEmpty)Text('Phone: ${r['phone']}'),if(r['type']=='Tax Invoice' && (r['shipTo']??'').toString().isNotEmpty)Text('Ship To: ${r['shipTo']}'),const SizedBox(height:12),const Row(children:[Expanded(child:Text('Item',style:TextStyle(fontWeight:FontWeight.bold))),Text('Qty  Rate  Amount',style:TextStyle(fontWeight:FontWeight.bold))]),const Divider(),...items.map((i)=>Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Row(children:[Expanded(child:Text((i['description']??'').toString())),Text('${i['quantity']}  ${money(i['rate'])}  ${money(i['total'])}')]))),const Divider(),Align(alignment:Alignment.centerRight,child:Text('Grand Total: ${money(total)}',style:const TextStyle(fontWeight:FontWeight.bold,fontSize:16))),if(['Invoice','Tax Invoice'].contains(r['type']))Align(alignment:Alignment.centerRight,child:Text('Received: ${money(received)}   Balance Due: ${money((total-received).clamp(0.0,total))}')),if((r['notes']??'').toString().isNotEmpty)Text('Notes: ${r['notes']}'),const SizedBox(height:16),const Center(child:Text('Thank you'))]))),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]));
   }
 
   Future<void> showStockDialog({Map<String, dynamic>? item}) async {
@@ -324,18 +425,28 @@ class _HomePageState extends State<HomePage> {
     final pdf = pw.Document();
     final items = (r['items'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ??
         [{'description': r['description'] ?? '', 'quantity': 1, 'rate': r['amount'] ?? 0, 'total': r['amount'] ?? 0}];
+    final business = Map<String,dynamic>.from((r['business'] as Map?)?.cast<String,dynamic>() ?? defaultBusiness);
+    final received = (r['receivedAmount'] as num?)?.toDouble() ?? 0;
     pdf.addPage(pw.MultiPage(build: (ctx) => [
+      if (r['type'] == 'Tax Invoice' && (business['name'] ?? '').toString().isNotEmpty) pw.Text(business['name'].toString(), style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+      if (r['type'] == 'Tax Invoice' && (business['address'] ?? '').toString().isNotEmpty) pw.Text(business['address'].toString()),
+      if (r['type'] == 'Tax Invoice' && (business['phone'] ?? '').toString().isNotEmpty) pw.Text('Phone: ${business['phone']}'),
+      if (r['type'] == 'Tax Invoice' && (business['gstin'] ?? '').toString().isNotEmpty) pw.Text('GSTIN: ${business['gstin']}'),
+      pw.SizedBox(height: 8),
       pw.Text(r['type'].toString().toUpperCase(), style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
       pw.Divider(),
       pw.Text('Number: ${r['number']}'),
       pw.Text('Date: ${(r['date'] ?? '').toString().substring(0, 10)}'),
       pw.Text('Customer: ${r['customer']}'),
       if ((r['phone'] ?? '').toString().isNotEmpty) pw.Text('Phone: ${r['phone']}'),
+      if (r['type'] == 'Tax Invoice' && (r['shipTo'] ?? '').toString().isNotEmpty) pw.Text('Ship To: ${r['shipTo']}'),
       pw.SizedBox(height: 16),
       pw.Table.fromTextArray(headers: ['Description', 'Qty', 'Rate (INR)', 'Total (INR)'],
         data: items.map((i) => [i['description'].toString(), i['quantity'].toString(), (i['rate'] as num).toStringAsFixed(2), (i['total'] as num).toStringAsFixed(2)]).toList()),
       pw.SizedBox(height: 12),
       pw.Align(alignment: pw.Alignment.centerRight, child: pw.Text('Grand Total: Rs. ${(r['amount'] as num).toStringAsFixed(2)}', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
+      if (['Invoice','Tax Invoice'].contains(r['type'])) pw.Align(alignment: pw.Alignment.centerRight, child: pw.Text('Received: Rs. ${received.toStringAsFixed(2)}    Balance Due: Rs. ${((r['amount'] as num).toDouble()-received).clamp(0.0,(r['amount'] as num).toDouble()).toStringAsFixed(2)}')),
+      if (r['type'] == 'Tax Invoice' && (business['bankName'] ?? '').toString().isNotEmpty) pw.Text('Bank: ${business['bankName']}  Account: ${business['accountName'] ?? ''}  A/C: ${business['accountNumber'] ?? ''}  IFSC: ${business['ifsc'] ?? ''}'),
       if ((r['notes'] ?? '').toString().isNotEmpty) pw.Text('Notes: ${r['notes']}'),
       pw.Spacer(), pw.Center(child: pw.Text('Thank you')),
     ]));
@@ -426,6 +537,8 @@ class _HomePageState extends State<HomePage> {
     final total = visible.fold<double>(0, (s, r) => s + ((r['amount'] as num?)?.toDouble() ?? 0));
     return Scaffold(
       appBar: AppBar(title: const Text('PR BUSINESS'), actions: [
+        IconButton(tooltip: 'Business Profiles', onPressed: businessSettings, icon: const Icon(Icons.business)),
+        IconButton(tooltip: 'Staff Management', onPressed: manageStaff, icon: const Icon(Icons.groups_outlined)),
         IconButton(tooltip: 'Category reports', onPressed: reports, icon: const Icon(Icons.analytics_outlined)),
         if (isStock) IconButton(tooltip: 'Stock report', onPressed: stockReport, icon: const Icon(Icons.picture_as_pdf)),
       ]),
@@ -463,18 +576,22 @@ class _HomePageState extends State<HomePage> {
               return Card(margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5), child: ListTile(
                 leading: const Icon(Icons.description_outlined),
                 title: Text(r['customer'].toString()),
-                subtitle: Text('${r['number']} • ${(r['date'] ?? '').toString().substring(0, 10)}\n${r['description'] ?? ''}'),
+                subtitle: Text('${r['number']} • ${(r['date'] ?? '').toString().substring(0, 10)}\n${r['description'] ?? ''}${r['type']=='Invoice' ? '\nReceived ${money(r['receivedAmount'] ?? 0)} • Due ${money(((r['amount'] as num?)?.toDouble() ?? 0)-((r['receivedAmount'] as num?)?.toDouble() ?? 0))}' : ''}'),
                 isThreeLine: true,
                 trailing: Text(money(r['amount'])),
                 onTap: () async {
                   final action = await showModalBottomSheet<String>(context: context, builder: (sc) => SafeArea(child: Wrap(children: [
                     ListTile(leading: const Icon(Icons.edit), title: const Text('Edit'), onTap: () => Navigator.pop(sc, 'edit')),
+                    if (['Invoice','Tax Invoice'].contains(r['type'])) ListTile(leading: const Icon(Icons.payments_outlined), title: const Text('Record Payment'), subtitle: Text('Outstanding: ${money(((r['amount'] as num?)?.toDouble() ?? 0) - ((r['receivedAmount'] as num?)?.toDouble() ?? 0))}'), onTap: () => Navigator.pop(sc, 'payment')),
+                    ListTile(leading: const Icon(Icons.visibility_outlined), title: const Text('Preview'), onTap: () => Navigator.pop(sc, 'preview')),
                     ListTile(leading: const Icon(Icons.picture_as_pdf), title: const Text('Share PDF'), onTap: () => Navigator.pop(sc, 'pdf')),
                     ListTile(leading: const Icon(Icons.delete_outline), title: const Text('Delete'), onTap: () => Navigator.pop(sc, 'delete')),
                   ])));
                   if (!mounted) return;
                   if (action == 'edit') await editRecord(r);
                   if (action == 'pdf') await createPdf(r);
+                  if (action == 'payment') await recordPayment(r);
+                  if (action == 'preview') await showDocumentPreview(r);
                   if (action == 'delete') await deleteRecord(r);
                 },
               ));

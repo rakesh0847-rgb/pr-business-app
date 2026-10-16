@@ -435,7 +435,14 @@ class _HomePageState extends State<HomePage> {
       ),
       body: loading ? const Center(child: CircularProgressIndicator()) : Column(children: [
         SingleChildScrollView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.all(8), child: Row(children: [
-          ...categories.asMap().entries.map((e) => Padding(padding: const EdgeInsets.only(right: 6), child: ChoiceChip(label: Text(e.value), selected: selectedTab == e.key, onSelected: (_) => setState(() => selectedTab = e.key))),
+          ...List<Widget>.generate(categories.length, (index) => Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(categories[index]),
+                  selected: selectedTab == index,
+                  onSelected: (_) => setState(() => selectedTab = index),
+                ),
+              )),
           ChoiceChip(label: const Text('Items / Stock'), selected: isStock, onSelected: (_) => setState(() => selectedTab = categories.length)),
         ])),
         if (!isStock) Card(margin: const EdgeInsets.all(12), child: ListTile(leading: const Icon(Icons.account_balance_wallet), title: Text('$type Total'), trailing: Text(money(total), style: const TextStyle(fontWeight: FontWeight.bold)))),

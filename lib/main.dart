@@ -55,9 +55,7 @@ class _HomePageState extends State<HomePage> {
     loadData();
   }
 
-  Future<void> loadData() async {
-    final prefs = await SharedPreferences.getInstance();
-    try {
+  
       final saved = prefs.getString(recordsKey);
       if (saved != null) {
         records = List<Map<String, dynamic>>.from(

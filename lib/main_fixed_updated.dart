@@ -176,7 +176,7 @@ class _HomePageState extends State<HomePage> {
 
   Map<String, dynamic> _attendanceFor(Map<String, dynamic> person, DateTime day) {
     final all = Map<String, dynamic>.from((person['attendance'] as Map?) ?? {});
-    return Map<String, dynamic>.from((all[_dateKey(day)] as Map?) ?? {'status': 'Absent', 'checkIn': '', 'checkOut': '', 'breakMinutes': 60, 'overtimeHours': 0.0});
+    return Map<String, dynamic>.from((all[_dateKey(day)] as Map?) ?? {'status': 'Absent', 'checkIn': '', 'checkOut': '', 'breakMinutes': 0, 'overtimeHours': 0.0});
   }
 
   Future<void> _saveAttendance(Map<String, dynamic> person, DateTime day, Map<String, dynamic> item) async {
@@ -191,7 +191,7 @@ class _HomePageState extends State<HomePage> {
     final a = DateTime.tryParse((item['checkIn'] ?? '').toString());
     final b = DateTime.tryParse((item['checkOut'] ?? '').toString());
     if (a == null || b == null || !b.isAfter(a)) return 0;
-    final mins = b.difference(a).inMinutes - ((item['breakMinutes'] as num?)?.toInt() ?? 60);
+    final mins = b.difference(a).inMinutes;
     return (mins > 0 ? mins / 60 : 0);
   }
 
@@ -206,8 +206,7 @@ class _HomePageState extends State<HomePage> {
       if (status == 'Present') payableDays += 1;
       if (status == 'Half-day') payableDays += .5;
       final hours = _hoursFor(a);
-      final enteredOT = (a['overtimeHours'] as num?)?.toDouble();
-      overtime += (enteredOT != null && enteredOT > 0) ? enteredOT : (hours - 8 > 0 ? hours - 8 : 0);
+      overtime += hours > 8.5 ? hours - 8.5 : 0;
     }
     final rate = (person['rate'] as num?)?.toDouble() ?? 0;
     final base = (person['payType'] == 'Daily wage') ? rate * payableDays : (rate / 26) * payableDays;
@@ -226,17 +225,18 @@ class _HomePageState extends State<HomePage> {
     await showDialog<void>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, refresh) => AlertDialog(
       title: const Text('Staff Management'),
       content: SizedBox(width: 560, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        ...staff.map((s) => Card(child: ListTile(
-          title: Text((s['name'] ?? 'Staff').toString()),
-          subtitle: Text('${s['payType']} • Rate ${money(s['rate'])} • OT ${money(s['overtimeRate'])}/hr'),
-          isThreeLine: true,
-          trailing: Wrap(spacing: 0, children: [
-            IconButton(tooltip: 'Attendance & Payroll', icon: const Icon(Icons.calendar_month), onPressed: () async { await _staffAttendance(s); refresh(() {}); }),
-            IconButton(tooltip: 'Advance / Loan', icon: const Icon(Icons.account_balance_wallet_outlined), onPressed: () async { await _staffMoney(s); refresh(() {}); }),
+        ...staff.map((s) => Card(margin: const EdgeInsets.symmetric(vertical: 5), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text((s['name'] ?? 'Staff').toString(), style: Theme.of(ctx).textTheme.titleMedium, softWrap: true),
+          const SizedBox(height: 4),
+          Text('${s['payType']} • Rate ${money(s['rate'])} • OT ${money(s['overtimeRate'])}/hr', softWrap: true),
+          const SizedBox(height: 8),
+          Wrap(alignment: WrapAlignment.start, spacing: 4, runSpacing: 4, children: [
+            OutlinedButton.icon(onPressed: () async { await _staffAttendance(s); refresh(() {}); }, icon: const Icon(Icons.calendar_month), label: const Text('Attendance')),
+            OutlinedButton.icon(onPressed: () async { await _staffMoney(s); refresh(() {}); }, icon: const Icon(Icons.account_balance_wallet_outlined), label: const Text('Advance / Loan')),
             IconButton(tooltip: 'Edit staff', icon: const Icon(Icons.edit), onPressed: () async { await editStaff(s); refresh(() {}); }),
             IconButton(tooltip: 'Delete staff', icon: const Icon(Icons.delete_outline), onPressed: () async { staff.remove(s); await saveData(); refresh(() {}); }),
           ]),
-        ))),
+        ])))),
         FilledButton.icon(onPressed: () async { final s = <String,dynamic>{'id':DateTime.now().microsecondsSinceEpoch.toString(),'name':'','payType':'Monthly salary','rate':0.0,'overtimeRate':0.0,'attendance':<String,dynamic>{},'moneyTransactions':<dynamic>[]}; await editStaff(s,isNew:true); refresh(() {}); }, icon: const Icon(Icons.add), label: const Text('Add Staff')),
         const Padding(padding: EdgeInsets.only(top: 8), child: Text('Attendance, check-in/out, overtime, advances and loan deductions are saved on this device.')),
       ]))), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
@@ -254,21 +254,25 @@ class _HomePageState extends State<HomePage> {
       final rate = (person['rate'] as num?)?.toDouble() ?? 0;
       final allEntries = attendance.entries.where((e) { final d = DateTime.tryParse(e.key); return d != null && d.year == month.year && d.month == month.month; }).toList();
       double present = 0, ot = 0;
-      for (final e in allEntries) { final v = Map<String,dynamic>.from(e.value as Map); if (v['status']=='Present') present++; if (v['status']=='Half-day') present += .5; final entered=(v['overtimeHours'] as num?)?.toDouble(); ot += entered != null && entered > 0 ? entered : (_hoursFor(v)-8 > 0 ? _hoursFor(v)-8 : 0); }
+      for (final e in allEntries) { final v = Map<String,dynamic>.from(e.value as Map); if (v['status']=='Present') present++; if (v['status']=='Half-day') present += .5; ot += _hoursFor(v)>8.5 ? _hoursFor(v)-8.5 : 0; }
       final base = person['payType']=='Daily wage' ? rate*present : rate/26*present;
       final otPay = ot*((person['overtimeRate'] as num?)?.toDouble()??0);
       final net = _monthPayroll(person, month);
       return AlertDialog(title: Text('${person['name']} • Attendance'), content: SizedBox(width: 580, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [IconButton(onPressed: () => refresh(() { month=DateTime(month.year,month.month-1); selected=DateTime(month.year,month.month,selected.day.clamp(1,DateTime(month.year,month.month+1,0).day)); }), icon: const Icon(Icons.chevron_left)), Expanded(child: Center(child: Text('${month.year}-${month.month.toString().padLeft(2,'0')}', style: const TextStyle(fontWeight: FontWeight.bold)))), IconButton(onPressed: () => refresh(() { month=DateTime(month.year,month.month+1); selected=DateTime(month.year,month.month,selected.day.clamp(1,DateTime(month.year,month.month+1,0).day)); }), icon: const Icon(Icons.chevron_right))]),
-        Wrap(spacing: 5, runSpacing: 5, children: List.generate(days, (i) { final d=DateTime(month.year,month.month,i+1); final a=_attendanceFor(person,d); final status=(a['status']??'Absent').toString(); return SizedBox(width: 39, child: OutlinedButton(onPressed: () => refresh(() => selected=d), style: OutlinedButton.styleFrom(padding: EdgeInsets.zero, backgroundColor: _dateKey(d)==_dateKey(selected)?Theme.of(ctx).colorScheme.primaryContainer:null), child: Text('${d.day}\n${status=='Present'?'P':status=='Half-day'?'½':status=='Leave'?'L':'A'}', textAlign: TextAlign.center, style: const TextStyle(fontSize: 11)))); })),
+        const Row(children: [Expanded(child: Center(child: Text('Mon', style: TextStyle(fontSize: 11)))),Expanded(child: Center(child: Text('Tue', style: TextStyle(fontSize: 11)))),Expanded(child: Center(child: Text('Wed', style: TextStyle(fontSize: 11)))),Expanded(child: Center(child: Text('Thu', style: TextStyle(fontSize: 11)))),Expanded(child: Center(child: Text('Fri', style: TextStyle(fontSize: 11)))),Expanded(child: Center(child: Text('Sat', style: TextStyle(fontSize: 11)))),Expanded(child: Center(child: Text('Sun', style: TextStyle(fontSize: 11))))]),
+        const SizedBox(height: 4),
+        GridView.count(crossAxisCount: 7, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 3, crossAxisSpacing: 3, childAspectRatio: 1.05, children: [
+          ...List.generate((DateTime(month.year, month.month, 1).weekday - 1), (_) => const SizedBox.shrink()),
+          ...List.generate(days, (i) { final d=DateTime(month.year,month.month,i+1); final a=_attendanceFor(person,d); final status=(a['status']??'Absent').toString(); final label=status=='Present'?'P':status=='Half-day'?'½':status=='Leave'?'L':'A'; return OutlinedButton(onPressed: () => refresh(() => selected=d), style: OutlinedButton.styleFrom(padding: EdgeInsets.zero, backgroundColor: _dateKey(d)==_dateKey(selected)?Theme.of(ctx).colorScheme.primaryContainer:null), child: FittedBox(fit: BoxFit.scaleDown, child: Text('${d.day}\n$label', textAlign: TextAlign.center, style: const TextStyle(fontSize: 11)))); }),
+        ]),
         const SizedBox(height: 10), Text('Selected date: ${_dateKey(selected)}', style: const TextStyle(fontWeight: FontWeight.bold)),
         DropdownButtonFormField<String>(value: (item['status']??'Absent').toString(), decoration: const InputDecoration(labelText:'Attendance status'), items: const [DropdownMenuItem(value:'Present',child:Text('Present')),DropdownMenuItem(value:'Absent',child:Text('Absent')),DropdownMenuItem(value:'Leave',child:Text('Leave')),DropdownMenuItem(value:'Half-day',child:Text('Half-day'))], onChanged: (v) async { if(v!=null){ item['status']=v; await _saveAttendance(person,selected,item); refresh((){}); }}),
         const SizedBox(height: 8), Text('Check-in: ${(item['checkIn']??'').toString().isEmpty?'Not recorded':DateTime.tryParse(item['checkIn'].toString())?.toLocal().toString().substring(11,16) ?? item['checkIn']}'),
         Text('Check-out: ${(item['checkOut']??'').toString().isEmpty?'Not recorded':DateTime.tryParse(item['checkOut'].toString())?.toLocal().toString().substring(11,16) ?? item['checkOut']}'),
-        Text('Net working time: ${hours.toStringAsFixed(2)} hours • Suggested OT: ${(hours-8>0?hours-8:0).toStringAsFixed(2)} hours'),
+        Text('Net working time: ${hours.toStringAsFixed(2)} hours • Suggested OT: ${(hours-8.5>0?hours-8.5:0).toStringAsFixed(2)} hours'),
         Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () async { final now=DateTime.now(); item['checkIn']=DateTime(selected.year,selected.month,selected.day,now.hour,now.minute).toIso8601String(); item['status']='Present'; await _saveAttendance(person,selected,item); refresh((){}); }, icon: const Icon(Icons.login), label: const Text('Check-in now'))), const SizedBox(width:6), Expanded(child: OutlinedButton.icon(onPressed: () async { final now=DateTime.now(); item['checkOut']=DateTime(selected.year,selected.month,selected.day,now.hour,now.minute).toIso8601String(); item['status']='Present'; await _saveAttendance(person,selected,item); refresh((){}); }, icon: const Icon(Icons.logout), label: const Text('Check-out now')))]),
-        TextFormField(initialValue: (item['breakMinutes']??60).toString(), keyboardType: TextInputType.number, decoration: const InputDecoration(labelText:'Break minutes (deducted from work time)'), onChanged: (v) { item['breakMinutes']=int.tryParse(v)??60; }),
-        TextFormField(initialValue: (item['overtimeHours']??0).toString(), keyboardType: const TextInputType.numberWithOptions(decimal:true), decoration: const InputDecoration(labelText:'Overtime hours (blank/0 = auto from over 8 hours)'), onChanged: (v) { item['overtimeHours']=double.tryParse(v)??0; }),
+        const Text('Standard day: 8.5 working hours. Overtime is calculated automatically from Check-in and Check-out; no lunch-break field is needed.'),
         FilledButton(onPressed: () async { await _saveAttendance(person,selected,item); refresh((){}); }, child: const Text('Save selected day')),
         const Divider(), Text('Monthly summary • Present days: ${present.toStringAsFixed(1)} / 26'), Text('Attendance salary: ${money(base)}'), Text('Overtime: ${ot.toStringAsFixed(2)} hours • ${money(otPay)}'), Text('Net after recorded deductions: ${money(net)}'),
         FilledButton.icon(onPressed: () async { final doc=pw.Document(); doc.addPage(pw.Page(build:(c)=>pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start,children:[pw.Text('PR BUSINESS - SALARY SLIP',style:pw.TextStyle(fontSize:18,fontWeight:pw.FontWeight.bold)),pw.SizedBox(height:10),pw.Text('Employee: ${person['name']}'),pw.Text('Month: ${month.year}-${month.month.toString().padLeft(2,'0')}'),pw.Text('Pay type: ${person['payType']}'),pw.Text('Present equivalent days: ${present.toStringAsFixed(1)}'),pw.Text('Attendance salary: ${money(base)}'),pw.Text('Overtime hours: ${ot.toStringAsFixed(2)}'),pw.Text('Overtime amount: ${money(otPay)}'),pw.Text('Deductions: ${money(base+otPay-net)}'),pw.Divider(),pw.Text('Net salary: ${money(net)}',style:pw.TextStyle(fontSize:16,fontWeight:pw.FontWeight.bold))]))); await Printing.sharePdf(bytes:await doc.save(),filename:'Salary_Slip_${person['name']}_${month.year}_${month.month}.pdf'); }, icon: const Icon(Icons.picture_as_pdf), label: const Text('Share Salary Slip PDF')),

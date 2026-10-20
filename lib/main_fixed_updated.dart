@@ -271,7 +271,47 @@ class _HomePageState extends State<HomePage> {
         const SizedBox(height: 8), Text('Check-in: ${(item['checkIn']??'').toString().isEmpty?'Not recorded':DateTime.tryParse(item['checkIn'].toString())?.toLocal().toString().substring(11,16) ?? item['checkIn']}'),
         Text('Check-out: ${(item['checkOut']??'').toString().isEmpty?'Not recorded':DateTime.tryParse(item['checkOut'].toString())?.toLocal().toString().substring(11,16) ?? item['checkOut']}'),
         Text('Net working time: ${hours.toStringAsFixed(2)} hours • Suggested OT: ${(hours-8.5>0?hours-8.5:0).toStringAsFixed(2)} hours'),
-        Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () async { final now=DateTime.now(); item['checkIn']=DateTime(selected.year,selected.month,selected.day,now.hour,now.minute).toIso8601String(); item['status']='Present'; await _saveAttendance(person,selected,item); refresh((){}); }, icon: const Icon(Icons.login), label: const Text('Check-in now'))), const SizedBox(width:6), Expanded(child: OutlinedButton.icon(onPressed: () async { final now=DateTime.now(); item['checkOut']=DateTime(selected.year,selected.month,selected.day,now.hour,now.minute).toIso8601String(); item['status']='Present'; await _saveAttendance(person,selected,item); refresh((){}); }, icon: const Icon(Icons.logout), label: const Text('Check-out now')))]),
+        Row(children: [
+          Expanded(child: OutlinedButton.icon(
+            onPressed: () async {
+              if ((item['checkIn'] ?? '').toString().isNotEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Check-in is already recorded for this date.')));
+                return;
+              }
+              final now = DateTime.now();
+              item['checkIn'] = DateTime(selected.year, selected.month, selected.day, now.hour, now.minute).toIso8601String();
+              item['checkOut'] = '';
+              item['status'] = 'Present';
+              await _saveAttendance(person, selected, item);
+              refresh(() {});
+            },
+            icon: const Icon(Icons.login), label: const Text('Check-in now'))),
+          const SizedBox(width: 6),
+          Expanded(child: OutlinedButton.icon(
+            onPressed: () async {
+              final checkInText = (item['checkIn'] ?? '').toString();
+              if (checkInText.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please record Check-in first.')));
+                return;
+              }
+              if ((item['checkOut'] ?? '').toString().isNotEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Check-out is already recorded for this date.')));
+                return;
+              }
+              final checkIn = DateTime.tryParse(checkInText);
+              final now = DateTime.now();
+              final checkOut = DateTime(selected.year, selected.month, selected.day, now.hour, now.minute);
+              if (checkIn != null && !checkOut.isAfter(checkIn)) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Check-out time must be after Check-in.')));
+                return;
+              }
+              item['checkOut'] = checkOut.toIso8601String();
+              item['status'] = 'Present';
+              await _saveAttendance(person, selected, item);
+              refresh(() {});
+            },
+            icon: const Icon(Icons.logout), label: const Text('Check-out now')))
+        ]),
         const Text('Standard day: 8.5 working hours. Overtime is calculated automatically from Check-in and Check-out; no lunch-break field is needed.'),
         FilledButton(onPressed: () async { await _saveAttendance(person,selected,item); refresh((){}); }, child: const Text('Save selected day')),
         const Divider(), Text('Monthly summary • Present days: ${present.toStringAsFixed(1)} / 26'), Text('Attendance salary: ${money(base)}'), Text('Overtime: ${ot.toStringAsFixed(2)} hours • ${money(otPay)}'), Text('Net after recorded deductions: ${money(net)}'),

@@ -56,29 +56,64 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> loadData() async {
-    final prefs = await SharedPreferences.getInstance();
     try {
+      // Keep SharedPreferences initialization inside try so an initialization
+      // error cannot leave the home screen spinning forever.
+      final prefs = await SharedPreferences.getInstance();
+
       final saved = prefs.getString(recordsKey);
       if (saved != null) {
         records = List<Map<String, dynamic>>.from(
           (jsonDecode(saved) as List).map((e) => Map<String, dynamic>.from(e)),
         );
       }
+
       final savedStock = prefs.getString(stockKey);
       if (savedStock != null) {
         stock = List<Map<String, dynamic>>.from(
           (jsonDecode(savedStock) as List).map((e) => Map<String, dynamic>.from(e)),
         );
       }
+
       final savedBusinesses = prefs.getString(businessKey);
-      if (savedBusinesses != null) businesses = List<Map<String, dynamic>>.from((jsonDecode(savedBusinesses) as List).map((e) => Map<String, dynamic>.from(e)));
+      if (savedBusinesses != null) {
+        businesses = List<Map<String, dynamic>>.from(
+          (jsonDecode(savedBusinesses) as List)
+              .map((e) => Map<String, dynamic>.from(e)),
+        );
+      }
+
       final savedStaff = prefs.getString(staffKey);
-      if (savedStaff != null) staff = List<Map<String, dynamic>>.from((jsonDecode(savedStaff) as List).map((e) => Map<String, dynamic>.from(e)));
-      if (businesses.isEmpty) businesses.add({'id':'default','name':'PR BUSINESS','address':'','phone':'','email':'','gstin':'','bankName':'','accountName':'','accountNumber':'','ifsc':'','default':true});
-    } catch (_) {
-      // Do not overwrite stored data if decoding fails.
+      if (savedStaff != null) {
+        staff = List<Map<String, dynamic>>.from(
+          (jsonDecode(savedStaff) as List)
+              .map((e) => Map<String, dynamic>.from(e)),
+        );
+      }
+
+      if (businesses.isEmpty) {
+        businesses.add({
+          'id': 'default',
+          'name': 'PR BUSINESS',
+          'address': '',
+          'phone': '',
+          'email': '',
+          'gstin': '',
+          'bankName': '',
+          'accountName': '',
+          'accountNumber': '',
+          'ifsc': '',
+          'default': true,
+        });
+      }
+    } catch (e, stackTrace) {
+      // Preserve saved data. Do not clear or overwrite preferences on failure.
+      debugPrint('PR BUSINESS loadData error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+    } finally {
+      // Always release the loading screen, even if storage initialization fails.
+      if (mounted) setState(() => loading = false);
     }
-    if (mounted) setState(() => loading = false);
   }
 
   Future<void> saveData() async {
